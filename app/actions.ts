@@ -393,9 +393,14 @@ async function saveInvoicePayment(form:FormData,user:CurrentUser,field:boolean) 
     }
     if(remaining!==0) throw new Error('Payment allocation failed');
     if(receipt)await savePaymentReceipt(tx,paymentId,receipt,user.id);
+    const shopBalanceAfterCents=invoiceId===null?totalDue-amountC:cents(Number((await tx.query(
+      'SELECT COALESCE(SUM(total-paid_total-credit_total),0) AS balance FROM invoices WHERE shop_id=$1',
+      [shopId],
+    )).rows[0].balance));
     if(fieldAccess) await fieldAccess.recordFieldAudit(tx,user,'FIELD_COLLECT_PAYMENT','payment',paymentId,shopId,form,
-      {invoiceId,paymentDate,amount:fromCents(amountC),method,...(combined?{combinedInvoices}:{})});
-    else await audit(tx,user.id,'RECORD_PAYMENT','payment',paymentId,{shopId,paymentDate});
+      {invoiceId,paymentDate,amount:fromCents(amountC),method,shopBalanceAfterCents,collectorRole:user.role,
+        balanceAfterCents:totalDue-amountC,...(combined?{combinedInvoices}:{})});
+    else await audit(tx,user.id,'RECORD_PAYMENT','payment',paymentId,{shopId,paymentDate,shopBalanceAfterCents});
   });
   done(field?'/field?shop='+shopId+'&received='+paymentId:'/payments?received='+paymentId);
 }

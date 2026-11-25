@@ -102,7 +102,8 @@ export async function GET(_:Request,{params}:{params:Promise<{kind:string;id:str
     } else {
       const {rows:[payment]} = await tx.query(`SELECT p.payment_no,p.shop_id,p.created_at,p.amount,p.method,p.reference,
         to_char(p.payment_date,'DD Mon YYYY') AS date,s.shop_name,s.store_code,u.full_name AS collector,
-        entry.details->'combinedInvoices' AS combined_invoices
+        entry.details->'combinedInvoices' AS combined_invoices,
+        entry.details->'balanceAfterCents' AS balance_after_cents
         FROM payments p JOIN shops s ON s.id=p.shop_id LEFT JOIN users u ON u.id=p.created_by
         LEFT JOIN LATERAL (
           SELECT details FROM audit_logs WHERE entity='payment' AND entity_id=p.id AND action='FIELD_COLLECT_PAYMENT'
@@ -111,7 +112,8 @@ export async function GET(_:Request,{params}:{params:Promise<{kind:string;id:str
         WHERE p.id=$1 AND ($2::bigint IS NULL OR (s.active AND s.assigned_sales_id=$2 AND p.created_by=$2))`,[id,owner]);
       if (!payment) return null;
       const combined=payment.combined_invoices as FieldCollectionLine[]|null;
-      const receiptNotes=[payment.collector&&'Collected by '+payment.collector,payment.reference&&'Reference '+payment.reference].filter(Boolean);
+      const collector=payment.collector||'Not recorded';
+      const referenceNotes=payment.reference?['Reference '+payment.reference]:[];
       if (combined?.length) {
         const balances=combined.reduce((sum,line)=>({
           before:sum.before+line.balanceBeforeCents,after:sum.after+line.balanceAfterCents,
@@ -121,7 +123,7 @@ export async function GET(_:Request,{params}:{params:Promise<{kind:string;id:str
           storeCode:payment.store_code,
           metrics:[{label:'Balance before payment',value:money(balances.before/100)},
             {label:'Payment received',value:money(payment.amount)},{label:'Balance immediately after payment',value:money(balances.after/100)}],
-          notes:[`Receipt ${payment.payment_no} · ${payment.method}`,...receiptNotes,
+          notes:[`Received by ${collector} · ${payment.method}`,`Receipt ${payment.payment_no}`,...referenceNotes,
             'The receipt table shows balances at collection. The invoice details below show current balances.'],
           tables:[{title:'Payment allocation by invoice',headers:['Invoice','Due date','Previous balance','Payment applied','Remaining balance'],
             widths:[23,17,20,20,20],rows:combined.map(line=>[line.number,line.dueDate,money(line.balanceBeforeCents/100),
@@ -130,12 +132,18 @@ export async function GET(_:Request,{params}:{params:Promise<{kind:string;id:str
               combined.filter(line=>!line.invoiceId).map(line=>line.number),payment.created_at)],
         } satisfies FieldPdfDocument;
       }
-      const {rows:allocations} = await tx.query(`SELECT i.id,i.invoice_no,a.amount FROM payment_allocations a
+      const {rows:allocations} = await tx.query(`SELECT i.id,i.invoice_no,a.amount,i.total-i.paid_total-i.credit_total AS balance
+        FROM payment_allocations a
         JOIN invoices i ON i.id=a.invoice_id WHERE a.payment_id=$1 ORDER BY i.id`,[id]);
+      const balanceAtCollection=typeof payment.balance_after_cents==='number' ? payment.balance_after_cents/100 : null;
+      const currentBalance=allocations.reduce((sum,row)=>sum+Math.round(Number(row.balance)*100),0)/100;
       document = {title:'Payment receipt '+payment.payment_no,scope:payment.shop_name,period:payment.date,generated,preparedBy:'',
         storeCode:payment.store_code,
-        metrics:[{label:'Payment received',value:money(payment.amount)},{label:'Method',value:payment.method}],
-        notes:receiptNotes,
+        metrics:[{label:'Payment received',value:money(payment.amount)},{label:'Received by',value:collector},
+          balanceAtCollection!==null
+            ? {label:'Balance after this payment',value:money(balanceAtCollection)}
+            : {label:'Current invoice balance',value:allocations.length?money(currentBalance):'Not recorded'}],
+        notes:['Payment method '+payment.method,...referenceNotes],
         tables:[{title:'Applied to invoices',headers:['Invoice','Amount'],widths:[70,30],
           rows:allocations.map(allocation=>[allocation.invoice_no,money(allocation.amount)])},
           ...await invoiceDetails(tx,payment.shop_id,allocations.map(allocation=>String(allocation.id)))]};

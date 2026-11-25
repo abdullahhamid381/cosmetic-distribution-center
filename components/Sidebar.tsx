@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import {usePathname} from 'next/navigation';
 import {useState} from 'react';
-import { BarChart3, CalendarDays, Boxes, ClipboardList, CreditCard, FileText, LayoutDashboard, LogOut, Menu, PackageSearch, Receipt, Settings2, ShieldCheck, ShoppingCart, Store, Trash2, Truck, Users, X } from 'lucide-react';
+import { BarChart3, CalendarDays, Boxes, ClipboardList, CreditCard, FileText, LayoutDashboard, LogOut, Menu, PackageSearch, Receipt, Settings2, ShieldCheck, ShoppingCart, Store, Trash2, Truck, Users, Wallet, X } from 'lucide-react';
 import {logout} from '@/app/actions';
 export const workspaceLinks = [
   {href:'/agent',label:'My Portal',icon:LayoutDashboard,roles:['SALES']},
@@ -14,6 +14,8 @@ export const workspaceLinks = [
   {href:'/field',label:'Field Sales',icon:ClipboardList,roles:['FIELD_SALES','SALES','ADMIN','MANAGER']},
   {href:'/field/access',label:'Field Sales Shop Access',icon:ShieldCheck,roles:['ADMIN','MANAGER']},
   {href:'/field/collections',label:'Field Collections',icon:Receipt,roles:['ADMIN','MANAGER']},
+  {href:'/field/reports',label:'Field Sales Reports',icon:BarChart3,roles:['FIELD_SALES','SALES','ADMIN','MANAGER']},
+  {href:'/field/handovers',label:'Payment Handovers',icon:Wallet,roles:['FIELD_SALES','SALES','ADMIN','MANAGER']},
   {href:'/dashboard',label:'Dashboard',icon:LayoutDashboard,roles:['ADMIN','MANAGER','ACCOUNTS']},
   {href:'/products',label:'Products & Prices',icon:Boxes,roles:['ADMIN','MANAGER','ACCOUNTS']},
   {href:'/inventory',label:'Warehouse Stock',icon:PackageSearch,roles:['ADMIN','MANAGER','WAREHOUSE']},
@@ -37,7 +39,7 @@ export const workspaceGroups = [
   {id:'portal',title:'My Sales Portal',paths:['/agent','/agent/orders','/agent/new','/agent/commissions','/agent/profile']},
   {id:'overview',title:'Overview',paths:['/dashboard','/operations']},
   {id:'inventory',title:'Inventory Management',paths:['/products','/inventory']},
-  {id:'sales',title:'Sales & Distribution',paths:['/field','/field/access','/field/collections','/sales/new','/local-sales','/deliveries','/invoices']},
+  {id:'sales',title:'Sales & Distribution',paths:['/field','/field/access','/field/collections','/field/reports','/field/handovers','/sales/new','/local-sales','/deliveries','/invoices']},
   {id:'network',title:'Distribution Network',paths:['/shops','/sales-team']},
   {id:'finance',title:'Finance & Accounts',paths:['/payments','/expenses','/balance','/monthly-closing']},
   {id:'administration',title:'Administration',paths:['/reports','/trash','/staff','/settings/bank','/audit']},

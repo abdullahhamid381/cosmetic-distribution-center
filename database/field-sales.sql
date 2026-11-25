@@ -27,3 +27,37 @@ BEGIN
       CHECK (role IN ('ADMIN','MANAGER','WAREHOUSE','SALES','FIELD_SALES','ACCOUNTS','DELIVERY'));
   END IF;
 END $$;
+
+CREATE TABLE IF NOT EXISTS field_payment_handovers (
+  id BIGSERIAL PRIMARY KEY,
+  submitted_by BIGINT NOT NULL REFERENCES users(id),
+  amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+  cash_amount NUMERIC(14,2) NOT NULL CHECK (cash_amount >= 0 AND cash_amount <= amount),
+  note TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'SUBMITTED' CHECK (status IN ('SUBMITTED','APPROVED','REJECTED')),
+  submitted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  reviewed_by BIGINT REFERENCES users(id),
+  reviewed_at TIMESTAMPTZ,
+  review_note TEXT NOT NULL DEFAULT '',
+  CHECK ((status = 'SUBMITTED' AND reviewed_by IS NULL AND reviewed_at IS NULL) OR
+         (status <> 'SUBMITTED' AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL))
+);
+
+CREATE TABLE IF NOT EXISTS field_payment_handover_items (
+  id BIGSERIAL PRIMARY KEY,
+  handover_id BIGINT NOT NULL REFERENCES field_payment_handovers(id),
+  payment_id BIGINT REFERENCES payments(id) ON DELETE SET NULL,
+  receipt_number TEXT NOT NULL,
+  shop_name TEXT NOT NULL,
+  method TEXT NOT NULL,
+  amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+  released_at TIMESTAMPTZ,
+  UNIQUE (handover_id,payment_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_field_handover_active_payment
+  ON field_payment_handover_items(payment_id) WHERE released_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_field_handover_submitter
+  ON field_payment_handovers(submitted_by,submitted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_field_handover_items_batch
+  ON field_payment_handover_items(handover_id,id);

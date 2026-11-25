@@ -18,9 +18,35 @@ export async function lastPayments(range:{from?:string;to?:string}={}) {
  const conditions:string[]=[],params:string[]=[];
  if(range.from){params.push(range.from);conditions.push(`p.payment_date >= $${params.length}::date`);}
  if(range.to){params.push(range.to);conditions.push(`p.payment_date <= $${params.length}::date`);}
- return query(`SELECT p.*,to_char(p.payment_date,'YYYY-MM-DD') AS payment_date,s.shop_name,EXISTS(SELECT 1 FROM payment_receipts pr WHERE pr.payment_id=p.id) AS has_receipt FROM payments p JOIN shops s ON s.id=p.shop_id
+ return query(`WITH shown AS (
+ SELECT p.* FROM payments p
  ${conditions.length?'WHERE '+conditions.join(' AND '):''}
- ORDER BY p.payment_date DESC,p.id DESC ${conditions.length?'':'LIMIT 100'}`,params);
+ ORDER BY p.payment_date DESC,p.id DESC ${conditions.length?'':'LIMIT 100'}
+ ), receipts AS (
+ SELECT p.*,to_char(p.payment_date,'YYYY-MM-DD') AS payment_date_label,s.shop_name,u.full_name AS received_by,
+ entry.details->'shopBalanceAfterCents' AS shop_balance_after_cents,
+ EXISTS(SELECT 1 FROM payment_receipts pr WHERE pr.payment_id=p.id) AS has_receipt
+ FROM shown p JOIN shops s ON s.id=p.shop_id LEFT JOIN users u ON u.id=p.created_by
+ LEFT JOIN LATERAL (
+   SELECT details FROM audit_logs WHERE entity='payment' AND entity_id=p.id
+   AND action IN ('RECORD_PAYMENT','FIELD_COLLECT_PAYMENT') ORDER BY id DESC LIMIT 1
+ ) entry ON true
+ ), legacy_shops AS (
+   SELECT DISTINCT shop_id FROM receipts WHERE shop_balance_after_cents IS NULL
+ ), events AS (
+   SELECT i.shop_id,i.created_at,0 AS kind,i.id,i.total AS delta FROM invoices i JOIN legacy_shops s USING(shop_id)
+   UNION ALL
+   SELECT r.shop_id,r.created_at,1,r.id,-r.total_credit FROM sales_returns r JOIN legacy_shops s USING(shop_id)
+   UNION ALL
+   SELECT p.shop_id,p.created_at,2,p.id,-p.amount FROM payments p JOIN legacy_shops s USING(shop_id)
+ ), ledger AS (
+   SELECT id,kind,SUM(delta) OVER (
+     PARTITION BY shop_id ORDER BY created_at,kind,id ROWS UNBOUNDED PRECEDING
+   ) AS reconstructed_balance
+   FROM events
+ )
+ SELECT p.*,l.reconstructed_balance FROM receipts p LEFT JOIN ledger l ON l.kind=2 AND l.id=p.id
+ ORDER BY p.payment_date DESC,p.id DESC`,params);
 }
 export async function salesTrend() {return query(`SELECT TO_CHAR(DATE_TRUNC('month',issue_date),'YYYY-MM') AS month, SUM(total-credit_total) AS net_sales FROM invoices GROUP BY 1 ORDER BY 1 DESC LIMIT 6`);}
 export async function queryOne<T extends QueryResultRow = QueryResultRow>(text:string, params:unknown[]=[]):Promise<T|null> { return (await query<T>(text, params))[0] ?? null; }

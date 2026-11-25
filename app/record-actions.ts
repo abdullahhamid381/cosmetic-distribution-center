@@ -26,6 +26,11 @@ function context(form:FormData) {
 async function audit(tx:PoolClient,uid:number,action:string,entity:string,id:number,details:unknown) {
  await tx.query('INSERT INTO public.audit_logs(user_id,action,entity,entity_id,details) VALUES($1,$2,$3,$4,$5)',[uid,action,entity,id,JSON.stringify(details)]);
 }
+async function checkFieldHandover(tx:PoolClient,paymentId:number) {
+ const result=await tx.query(`SELECT 1 FROM field_payment_handover_items
+  WHERE payment_id=$1 AND released_at IS NULL`,[paymentId]);
+ if(result.rowCount)throw new Error('This payment belongs to a submitted or approved field handover.');
+}
 function recordErrorMessage(error:unknown) {
  const code=(error as {code?:string})?.code;
  return code==='23505'?'This reference is already in use. Choose a unique value.':code==='23503'?'This record is linked to other records. Remove those links first.':code?'The change could not be saved. Check the values and linked records.':error instanceof Error?error.message:'Unable to update record.';
@@ -65,6 +70,7 @@ export async function saveRecord(form:FormData) {
   await transaction(async tx=>{
    const before=(await tx.query(`SELECT * FROM ${config.table} WHERE id=$1 FOR UPDATE`,[id])).rows[0];
    if(!before)throw new Error('Record not found');
+   if(entity==='payments'&&before.field_submission_id)await checkFieldHandover(tx,id);
    if((await tx.query('SELECT 1 FROM record_trash WHERE entity=$1 AND record_id=$2',[entity,id])).rowCount)
     throw new Error('Restore this record from Trash before editing it.');
    if(entity==='warehouses'&&!values.active) {
@@ -137,6 +143,7 @@ export async function deleteRecord(form:FormData) {
    }
    const row=(await tx.query(`SELECT * FROM ${config.table} WHERE id=$1 FOR UPDATE`,[id])).rows[0];
    if(!row)throw new Error('Record not found');
+   if(entity==='payments'&&row.field_submission_id)await checkFieldHandover(tx,id);
    if(entity==='staff'&&user.id===id)throw new Error('You cannot disable your own account');
    const relatedSql=entity==='payments'?`jsonb_build_object(
     'allocations',(SELECT COALESCE(jsonb_agg(a),'[]') FROM payment_allocations a WHERE a.payment_id=r.id),

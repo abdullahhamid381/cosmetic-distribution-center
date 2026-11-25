@@ -221,3 +221,11 @@ Run `npm run db:migrate -- --field-sales-only` against the deployment database b
 Create a **Field Sales** account in **Staff & Roles**, and use **Sales & Distribution → Field Sales Shop Access** to assign it to individual shops. Administrators and managers can grant, reassign, or revoke access. A shop registered by a Field Sales user awaits assignment. Existing Sales Agent accounts continue to use their assigned shops and keep their separate agent portal. Booking quantities go into the pending queue and are deducted from inventory only when a manager dispatches the booking and issues its invoice. Approved shop pricing and inventory checks use the existing dispatch workflow.
 
 Collections are applied to the selected invoice, and the collector is recorded from the current session. Field activity stores the server date and time and the device coordinates only when the user attaches a location. HTTPS and browser location permission are required on phones. The PDF button opens the device share sheet on browsers that support file sharing. Choose WhatsApp there, or download the PDF and attach it manually.
+
+### Field Sales reports and payment handover
+
+Salespeople can open **My Field Sales Report** from Field Sales to see their registered shops, invoice collections, and cash awaiting handover confirmation. Administrators and managers can review the same report across salespeople and filter by date.
+
+In **Payment Handovers**, a salesperson selects their collected receipts and submits a handover. An administrator verifies the amount, reviews the receipt list, and approves or rejects it. Rejected receipts can be submitted again. Customer payments are already posted when collected. Handover approval only records the transfer and does not credit the customer or business balance a second time.
+
+Before deploying this feature, rerun `npm run db:migrate -- --field-sales-only` against the deployment database to add the handover tables.

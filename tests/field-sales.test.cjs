@@ -119,6 +119,7 @@ test('combined collection allocates oldest due first and snapshots every open in
     submission_id:'858c8e6c-6c2a-4a7e-a8bf-22567ddab138',
   }));
   assert.deepEqual(allocations,[[24,'1','250.00'],[24,'2','50.00']]);
+  assert.equal(audit.balanceAfterCents,47000);
   assert.deepEqual(audit.combinedInvoices.map(line=>[line.number,line.balanceBeforeCents,line.appliedCents,line.balanceAfterCents]),[
     ['INV-1',25000,25000,0],['INV-2',40000,5000,35000],['INV-3',12000,0,12000],
   ]);
@@ -204,4 +205,80 @@ test('shops registered by Field Sales staff wait for manager assignment',async()
   assert.match(writes[0].sql,/INSERT INTO shops/);
   assert.equal(writes[0].args.at(-1),null);
   assert.equal(JSON.parse(writes[1].args[4]).changes.assigned_sales_id,null);
+});
+
+test('single invoice receipt shows who received payment and preserves the balance at collection',async()=>{
+  let document;
+  const {GET}=load('app/api/field/pdf/[kind]/[id]/route.ts',{
+    '@/lib/auth':{currentUser:async()=>seller},
+    '@/lib/field-sales':field,
+    '@/lib/utils':utils,
+    '@/lib/closing-period':{pakistanToday:()=> '2026-11-25'},
+    '@/lib/db':{transaction:async fn=>fn({query:async sql=>{
+      if(sql.startsWith('SET TRANSACTION'))return {};
+      if(sql.includes('FROM payment_allocations'))return {rows:[{id:'1',invoice_no:'INV-1',amount:'250',balance:'0'}]};
+      if(sql.includes('FROM invoices i LEFT JOIN deliveries'))return {rows:[]};
+      return {rows:[{payment_no:'PAY-000024',amount:'250',method:'CASH',shop_name:'Example shop',
+        store_code:'EXS-10',collector:'Example Collector',date:'25 Nov 2026',shop_id:'10',balance_after_cents:15000}]};
+    }})},
+    '@/lib/report-pdf':{reportPdf:async model=>{document=model;return new Uint8Array([37,80,68,70]);}},
+  });
+  const response=await GET(new Request('http://localhost/api/field/pdf/receipt/24'),
+    {params:Promise.resolve({kind:'receipt',id:'24'})});
+  assert.equal(response.status,200);
+  assert.deepEqual(document.metrics,[
+    {label:'Payment received',value:'Rs. 250.00'},
+    {label:'Received by',value:'Example Collector'},
+    {label:'Balance after this payment',value:'Rs. 150.00'},
+  ]);
+});
+
+test('field handover submits only the collector’s own receipts and separates cash without posting payments',async()=>{
+  const statements=[];
+  const tx={query:async(sql,args)=>{
+    statements.push(sql);
+    if(sql.includes('FOR UPDATE OF p')){
+      assert.deepEqual(args,[[1,2],7]);
+      return {rows:[{id:'1',amount:'100.20',method:'CASH'},{id:'2',amount:'250.40',method:'BANK'}]};
+    }
+    if(sql.includes('SELECT 1 FROM field_payment_handover_items'))return {rowCount:0};
+    if(sql.includes('INSERT INTO field_payment_handovers')){
+      assert.deepEqual(args,[7,'350.60','100.20','Cash and bank slip']);
+      return {rows:[{id:'31'}]};
+    }
+    if(sql.includes('INSERT INTO field_payment_handover_items'))assert.deepEqual(args,['31',[1,2]]);
+    return {rows:[]};
+  }};
+  const actions=load('app/field-handover-actions.ts',{
+    'next/navigation':{unstable_rethrow:()=>{}},'next/cache':{revalidatePath:()=>{}},
+    '@/lib/auth':{requireRole:async(...roles)=>{assert.ok(roles.includes('FIELD_SALES'));return seller;}},
+    '@/lib/db':{transaction:async fn=>fn(tx)},'@/lib/field-sales':field,'@/lib/utils':utils,
+  });
+  const form=formWith({payment_id:'1',note:'Cash and bank slip'});
+  form.append('payment_id','2');
+  assert.match((await actions.submitFieldHandover({},form)).success,/submitted/);
+  assert.equal(statements.some(sql=>/INSERT INTO payments|UPDATE invoices/i.test(sql)),false);
+});
+
+test('only admins review handovers and a rejection releases payments for resubmission',async()=>{
+  const statements=[];
+  const actions=load('app/field-handover-actions.ts',{
+    'next/navigation':{unstable_rethrow:()=>{}},'next/cache':{revalidatePath:()=>{}},
+    '@/lib/auth':{requireRole:async(...roles)=>{assert.deepEqual(roles,['ADMIN']);return {id:2,role:'ADMIN'};}},
+    '@/lib/db':{transaction:async fn=>fn({query:async(sql,args)=>{
+      statements.push(sql);
+      if(sql.includes('UPDATE field_payment_handovers')){
+        assert.match(sql,/status='SUBMITTED' AND submitted_by<>\$3/);
+        assert.deepEqual(args,[31,'REJECTED',2,'Cash amount does not match']);
+        return {rows:[{submitted_by:'7',amount:'350.60'}]};
+      }
+      return {rows:[]};
+    }})},
+    '@/lib/field-sales':field,'@/lib/utils':utils,
+  });
+  assert.match((await actions.reviewFieldHandover({},formWith({
+    handover_id:'31',decision:'REJECTED',review_note:'Cash amount does not match',
+  }))).success,/submit the payments again/);
+  assert.ok(statements.some(sql=>sql.includes('SET released_at=now()')));
+  assert.equal(statements.some(sql=>/INSERT INTO payments|UPDATE invoices/i.test(sql)),false);
 });

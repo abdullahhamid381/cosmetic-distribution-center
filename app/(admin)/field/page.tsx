@@ -50,7 +50,7 @@ export default async function FieldSales({searchParams}: {searchParams:Promise<{
   const user = await requireRole('SALES','FIELD_SALES','ADMIN','MANAGER');
   const owner = fieldOwner(user);
   const selection = await searchParams;
-  const [shops, products, agents, queue] = await Promise.all([
+  const [shops, products, agents, queue, sellerStats] = await Promise.all([
     query<Shop>(`SELECT s.id,s.shop_name,s.contact_name,s.phone,s.address,s.city,s.assigned_sales_id,
       seller.full_name AS seller,registrar.full_name AS registered_by
       FROM shops s LEFT JOIN users seller ON seller.id=s.assigned_sales_id
@@ -65,6 +65,15 @@ export default async function FieldSales({searchParams}: {searchParams:Promise<{
       to_char(b.created_at AT TIME ZONE 'Asia/Karachi','DD Mon YYYY HH24:MI') AS date
       FROM field_stock_bookings b JOIN shops s ON s.id=b.shop_id JOIN users u ON u.id=b.created_by
       WHERE b.status='PENDING' AND s.active ORDER BY b.created_at,b.id LIMIT 20`) : [],
+    owner===null ? [] : query(`SELECT
+      (SELECT COUNT(*) FROM audit_logs WHERE user_id=$1 AND action='FIELD_REGISTER_SHOP' AND entity='shop') AS registrations,
+      COALESCE(SUM(p.amount),0) AS recovered,
+      COALESCE(SUM(p.amount) FILTER(WHERE i.id IS NULL),0) AS unsubmitted,
+      COALESCE(SUM(p.amount) FILTER(WHERE h.status='SUBMITTED'),0) AS awaiting
+      FROM payments p
+      LEFT JOIN field_payment_handover_items i ON i.payment_id=p.id AND i.released_at IS NULL
+      LEFT JOIN field_payment_handovers h ON h.id=i.handover_id
+      WHERE p.created_by=$1 AND p.field_submission_id IS NOT NULL`,[owner]),
   ]);
   const shop = shops.find(row => row.id === selection.shop) ?? shops[0];
   const params = [shop?.id,owner];
@@ -82,7 +91,9 @@ export default async function FieldSales({searchParams}: {searchParams:Promise<{
       AND ($2::bigint IS NULL OR s.assigned_sales_id=$2)
       ORDER BY (i.total>i.paid_total+i.credit_total) DESC,i.issue_date DESC,i.id DESC`,params),
     query(`SELECT p.id,p.payment_no,p.amount,p.method,u.full_name AS collector,to_char(p.payment_date,'DD Mon YYYY') AS date,
-      COALESCE(entry.details ? 'combinedInvoices',false) AS combined
+      COALESCE(entry.details ? 'combinedInvoices',false) AS combined,
+      entry.details->'balanceAfterCents' AS balance_after_cents,
+      entry.details->'combinedInvoices' AS combined_invoices
       FROM payments p JOIN shops s ON s.id=p.shop_id LEFT JOIN users u ON u.id=p.created_by
       LEFT JOIN LATERAL (
         SELECT details FROM audit_logs WHERE entity='payment' AND entity_id=p.id AND action='FIELD_COLLECT_PAYMENT'
@@ -102,6 +113,10 @@ export default async function FieldSales({searchParams}: {searchParams:Promise<{
   const due = invoices.filter(invoice => Number(invoice.due)>0);
   const openTotal = due.reduce((total, invoice) => total+Math.round(Number(invoice.due)*100),0)/100;
   const received = payments.find(payment => payment.id===selection.received);
+  const remaining = typeof received?.balance_after_cents==='number' ? received.balance_after_cents/100
+    : Array.isArray(received?.combined_invoices)
+      ? received.combined_invoices.reduce((sum:number,line:{balanceAfterCents:number})=>sum+line.balanceAfterCents,0)/100
+      : null;
   const today = pakistanToday();
 
   return <div className="sales-department">
@@ -110,10 +125,22 @@ export default async function FieldSales({searchParams}: {searchParams:Promise<{
       <div className="actions">
         {owner===null && <Link className="btn" href="/field/access">Manage shop access</Link>}
         {owner===null && <Link className="btn" href="/field/collections">All collections</Link>}
+        <Link className="btn" href="/field/reports">{owner===null?'Field Sales reports':'My Field Sales report'}</Link>
+        <Link className="btn" href="/field/handovers">Payment handovers</Link>
         <Link className="btn primary" href={`/field?new=1${shop?'&shop='+shop.id:''}#register-shop`}><Store size={16}/> Register shop</Link>
       </div></div>
 
     {!shops.length && user.role==='FIELD_SALES' && <p className="notice">No shops are assigned to your account yet. You can register a shop for a manager to assign.</p>}
+
+    {sellerStats[0] && <section className="card section-gap" aria-labelledby="field-recovery-heading">
+      <div className="card-header"><div><h2 id="field-recovery-heading">My field recovery</h2><p className="card-sub">All recorded Field Sales activity</p></div>
+        <Link className="btn" href="/field/reports">View full report</Link>
+      </div>
+      <div className="stats-grid">{[
+        ['Shops registered',sellerStats[0].registrations],['Recovered',money(sellerStats[0].recovered)],
+        ['Still to submit',money(sellerStats[0].unsubmitted)],['Awaiting approval',money(sellerStats[0].awaiting)],
+      ].map(([label,value])=><div className="card stat" key={label}><span className="stat-top">{label}</span><strong>{value}</strong></div>)}</div>
+    </section>}
 
     {shops.length>0 && <form className="card inline-form" action="/field">
       <label className="field">Shop<select name="shop" defaultValue={shop?.id}>
@@ -139,6 +166,9 @@ export default async function FieldSales({searchParams}: {searchParams:Promise<{
         <p className="card-sub">Registered by {shop.registered_by || 'not recorded'} · Assigned seller {shop.seller || 'unassigned'}</p></div></div>
         {received && <div className="success-note">
           <p role="status">Payment {received.payment_no} recorded.</p>
+          <p>Received by <strong>{received.collector || 'Not recorded'}</strong>
+            {remaining!==null && <> · Balance after this payment <strong>{money(remaining)}</strong></>}
+          </p>
           <ShareFieldPdf key={'receipt-'+received.id} kind="receipt" id={String(received.id)} customerPhone={shop.phone}
             label={received.combined?'Share receipt with updated invoices':'Share receipt with updated invoice'}/>
         </div>}
