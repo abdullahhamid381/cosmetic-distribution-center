@@ -3,6 +3,7 @@ import type {CurrentUser} from './auth';
 import type {PoolClient} from 'pg';
 
 export type FieldCollectionLine = {
+  invoiceId?: string;
   number: string;
   dueDate: string;
   balanceBeforeCents: number;

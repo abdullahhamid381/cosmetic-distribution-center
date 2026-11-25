@@ -4,11 +4,52 @@ import {transaction} from '@/lib/db';
 import {fieldOwner, type FieldCollectionLine} from '@/lib/field-sales';
 import {money} from '@/lib/utils';
 import {reportPdf} from '@/lib/report-pdf';
-import type {ReportDocument} from '@/lib/report-document';
+import type {ReportDocument, ReportTable} from '@/lib/report-document';
 import {pakistanToday} from '@/lib/closing-period';
+import {invoiceSlipCode, invoiceSlipNumberSql} from '@/lib/invoice-dates';
+import {invoiceBarcode} from '@/lib/invoice-barcode';
+import type {PoolClient} from 'pg';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+async function invoiceDetails(tx: PoolClient, shopId: string, ids: string[],
+  legacyNumbers: string[] = [], recordedAt: Date|null = null): Promise<ReportTable[]> {
+  if (!ids.length && !legacyNumbers.length) return [];
+  const {rows:invoices} = await tx.query(`SELECT i.id,i.invoice_no,i.subtotal,i.discount_total,i.total,
+    i.paid_total,i.credit_total,i.total-i.paid_total-i.credit_total AS balance,
+    i.issue_date::text AS issue_date,i.due_date::text AS due_date,${invoiceSlipNumberSql} AS slip_number,
+    items.lines
+    FROM invoices i LEFT JOIN deliveries d ON d.id=i.delivery_id
+    LEFT JOIN LATERAL (
+      SELECT jsonb_agg(jsonb_build_object(
+        'name',p.name,'batch',b.batch_number,'qty',ii.quantity,'mrp',ii.retail_unit_price,
+        'first',COALESCE(ii.first_discount_pct,ii.discount_pct),'second',COALESCE(ii.second_discount_pct,0),
+        'price',ii.applied_unit_price,'total',ii.line_total
+      ) ORDER BY ii.id) AS lines
+      FROM invoice_items ii JOIN products p ON p.id=ii.product_id LEFT JOIN batches b ON b.id=ii.batch_id
+      WHERE ii.invoice_id=i.id
+    ) items ON true
+    WHERE i.shop_id=$1 AND (i.id=ANY($2::bigint[]) OR (i.invoice_no=ANY($3::text[]) AND i.created_at <= $4::timestamptz))
+    ORDER BY i.due_date,i.id`,[shopId,ids,legacyNumbers,recordedAt]);
+  const percent = (value:unknown) => Number(value ?? 0).toFixed(2)+'%';
+  const price = (value:number|string) => money(value).slice(4);
+  return invoices.map(invoice=>({
+    title:'Invoice '+(invoice.invoice_no || '#'+invoice.id),
+    barcode:invoiceBarcode(invoiceSlipCode(invoice.issue_date,invoice.slip_number),Number(invoice.id)),
+    note:[
+      `Issued ${invoice.issue_date}  ·  Due ${invoice.due_date}`,
+      `Retail subtotal ${money(invoice.subtotal)}  ·  Discount ${money(invoice.discount_total)}  ·  Invoice total ${money(invoice.total)}`,
+      `Total paid ${money(invoice.paid_total)}  ·  Return credits ${money(invoice.credit_total)}  ·  Remaining balance ${money(invoice.balance)}`,
+    ].join('\n'),
+    headers:['Product / Batch','Qty','MRP (PKR)','1st disc.','2nd disc.','Unit price (PKR)','Total (PKR)'],
+    widths:[31,8,12,10,10,14,15],
+    rows:(invoice.lines??[]).map((line:{name:string;batch:string|null;qty:number;mrp:number;first:number;second:number;price:number;total:number})=>[
+      line.batch?`${line.name}\nBatch: ${line.batch}`:line.name,String(line.qty),price(line.mrp),percent(line.first),
+      percent(line.second),price(line.price),price(line.total),
+    ]),
+  }));
+}
 
 export async function GET(_:Request,{params}:{params:Promise<{kind:string;id:string}>}) {
   const user = await currentUser();
@@ -41,21 +82,18 @@ export async function GET(_:Request,{params}:{params:Promise<{kind:string;id:str
     }
     let document: ReportDocument;
     if (kind==='invoice') {
-      const {rows:[invoice]} = await tx.query(`SELECT i.invoice_no,i.total,i.paid_total,i.credit_total,
+      const {rows:[invoice]} = await tx.query(`SELECT i.shop_id,i.invoice_no,i.total,i.paid_total,i.credit_total,
         to_char(i.issue_date,'DD Mon YYYY') AS date,to_char(i.due_date,'DD Mon YYYY') AS due_date,s.shop_name
         FROM invoices i JOIN shops s ON s.id=i.shop_id WHERE i.id=$1
         AND ($2::bigint IS NULL OR (s.active AND s.assigned_sales_id=$2))`,[id,owner]);
       if (!invoice) return null;
-      const {rows:items} = await tx.query(`SELECT p.name,ii.quantity,ii.applied_unit_price,ii.line_total
-        FROM invoice_items ii JOIN products p ON p.id=ii.product_id WHERE ii.invoice_id=$1 ORDER BY ii.id`,[id]);
       document = {title:'Sales invoice '+invoice.invoice_no,scope:invoice.shop_name,period:invoice.date,generated:pakistanToday(),preparedBy:'',
         metrics:[{label:'Invoice total',value:money(invoice.total)},{label:'Paid',value:money(invoice.paid_total)},
           {label:'Balance due',value:money(Number(invoice.total)-Number(invoice.paid_total)-Number(invoice.credit_total))}],
         notes:['Payment due '+invoice.due_date,'Return credits '+money(invoice.credit_total)],
-        tables:[{title:'Invoice items',headers:['Product','Quantity','Unit price','Total'],widths:[49,11,20,20],
-          rows:items.map(item=>[item.name,String(item.quantity),money(item.applied_unit_price),money(item.line_total)])}]};
+        tables:await invoiceDetails(tx,invoice.shop_id,[id])};
     } else {
-      const {rows:[payment]} = await tx.query(`SELECT p.payment_no,p.amount,p.method,p.reference,
+      const {rows:[payment]} = await tx.query(`SELECT p.payment_no,p.shop_id,p.created_at,p.amount,p.method,p.reference,
         to_char(p.payment_date,'DD Mon YYYY') AS date,s.shop_name,u.full_name AS collector,
         entry.details->'combinedInvoices' AS combined_invoices
         FROM payments p JOIN shops s ON s.id=p.shop_id LEFT JOIN users u ON u.id=p.created_by
@@ -76,24 +114,27 @@ export async function GET(_:Request,{params}:{params:Promise<{kind:string;id:str
           metrics:[{label:'Balance before payment',value:money(balances.before/100)},
             {label:'Payment received',value:money(payment.amount)},{label:'Balance immediately after payment',value:money(balances.after/100)}],
           notes:[`Receipt ${payment.payment_no} · ${payment.method}`,...receiptNotes,
-            'Balances shown are from the time this payment was recorded.'],
+            'The receipt table shows balances at collection. The invoice details below show current balances.'],
           tables:[{title:'Payment allocation by invoice',headers:['Invoice','Due date','Previous balance','Payment applied','Remaining balance'],
             widths:[23,17,20,20,20],rows:combined.map(line=>[line.number,line.dueDate,money(line.balanceBeforeCents/100),
-              money(line.appliedCents/100),money(line.balanceAfterCents/100)])}],
+              money(line.appliedCents/100),money(line.balanceAfterCents/100)])},
+            ...await invoiceDetails(tx,payment.shop_id,combined.flatMap(line=>line.invoiceId?[line.invoiceId]:[]),
+              combined.filter(line=>!line.invoiceId).map(line=>line.number),payment.created_at)],
         } satisfies ReportDocument;
       }
-      const {rows:allocations} = await tx.query(`SELECT i.invoice_no,a.amount FROM payment_allocations a
+      const {rows:allocations} = await tx.query(`SELECT i.id,i.invoice_no,a.amount FROM payment_allocations a
         JOIN invoices i ON i.id=a.invoice_id WHERE a.payment_id=$1 ORDER BY i.id`,[id]);
       document = {title:'Payment receipt '+payment.payment_no,scope:payment.shop_name,period:payment.date,generated:pakistanToday(),preparedBy:'',
         metrics:[{label:'Payment received',value:money(payment.amount)},{label:'Method',value:payment.method}],
         notes:receiptNotes,
         tables:[{title:'Applied to invoices',headers:['Invoice','Amount'],widths:[70,30],
-          rows:allocations.map(allocation=>[allocation.invoice_no,money(allocation.amount)])}]};
+          rows:allocations.map(allocation=>[allocation.invoice_no,money(allocation.amount)])},
+          ...await invoiceDetails(tx,payment.shop_id,allocations.map(allocation=>String(allocation.id)))]};
     }
     return document;
   });
   if (!document) return new Response(null,{status:404});
-  const bytes = await reportPdf(document,{customerCopy:true});
+  const bytes = await reportPdf(document,{customerCopy:true,portrait:true});
   return new NextResponse(new Uint8Array(bytes),{headers:{
     'Content-Type':'application/pdf',
     'Content-Disposition':`attachment; filename="hh-medics-${kind}-${id}.pdf"`,

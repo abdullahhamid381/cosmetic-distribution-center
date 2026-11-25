@@ -381,6 +381,7 @@ async function saveInvoicePayment(form:FormData,user:CurrentUser,field:boolean) 
       const dueC=cents(Number(row.total)-Number(row.paid_total)-Number(row.credit_total));
       const applied=Math.min(remaining,dueC);
       if(combined)combinedInvoices.push({
+        invoiceId:String(row.id),
         number:String(row.invoice_no||'Invoice #'+row.id),dueDate:String(row.due_date),
         balanceBeforeCents:dueC,appliedCents:applied,balanceAfterCents:dueC-applied,
       });

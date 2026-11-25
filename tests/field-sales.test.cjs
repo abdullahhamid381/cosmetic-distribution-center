@@ -135,12 +135,21 @@ test('combined receipt uses the recorded snapshot, including invoices with no al
     '@/lib/field-sales':field,
     '@/lib/utils':utils,
     '@/lib/closing-period':{pakistanToday:()=> '2026-11-25'},
+    '@/lib/invoice-dates':load('lib/invoice-dates.ts'),
+    '@/lib/invoice-barcode':load('lib/invoice-barcode.ts'),
     '@/lib/db':{transaction:async fn=>fn({query:async(sql,args)=>{
       if(sql.startsWith('SET TRANSACTION'))return {};
+      if(sql.includes('FROM invoices i LEFT JOIN deliveries')){
+        assert.equal(args[0],'10');
+        assert.deepEqual(args[2],['INV-1','INV-2']);
+        return {rows:[{id:1,invoice_no:'INV-1',issue_date:'2026-11-10',due_date:'2026-11-10',
+          slip_number:'1',subtotal:'500',discount_total:'250',total:'250',paid_total:'250',credit_total:'0',balance:'0',
+          lines:[{name:'Serum',batch:'B10',qty:2,mrp:250,first:50,second:0,price:125,total:250}]}]};
+      }
       assert.match(sql,/assigned_sales_id=\$2 AND p.created_by=\$2/);
       assert.deepEqual(args,['24',7]);
       return {rows:[{payment_no:'PAY-000024',amount:'250',method:'CASH',shop_name:'Example shop',
-        date:'25 Nov 2026',combined_invoices:rows}]};
+        date:'25 Nov 2026',shop_id:'10',created_at:new Date('2026-11-25T08:00:00Z'),combined_invoices:rows}]};
     }})},
     '@/lib/report-pdf':{reportPdf:async model=>{document=model;return new Uint8Array([37,80,68,70]);}},
   });
@@ -149,6 +158,9 @@ test('combined receipt uses the recorded snapshot, including invoices with no al
   assert.equal(response.status,200);
   assert.equal(document.title,'Combined invoice statement and receipt');
   assert.deepEqual(document.tables[0].rows[1],['INV-2','2026-11-20','Rs. 400.00','Rs. 0.00','Rs. 400.00']);
+  assert.equal(document.tables[1].barcode.value,'INV-20261110-1');
+  assert.deepEqual(document.tables[1].rows[0],['Serum\nBatch: B10','2','250.00','50.00%','0.00%','125.00','250.00']);
+  assert.match(document.tables[1].note,/Remaining balance Rs. 0.00/);
   assert.equal(response.headers.get('cache-control'),'private, no-store');
 });
 

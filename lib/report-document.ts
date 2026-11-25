@@ -2,7 +2,8 @@ import {reportRoi,roiLabel} from './report-roi';
 import type {businessReport,reportFilters} from './report-data';
 import {money} from './utils';
 
-export type ReportTable={title:string;note?:string;headers:string[];widths:number[];rows:string[][]};
+export type ReportTable={title:string;note?:string;headers:string[];widths:number[];rows:string[][];
+ barcode?:ReturnType<typeof import('./invoice-barcode').invoiceBarcode>};
 export type ReportDocument={title:string;scope:string;period:string;generated:string;preparedBy:string;metrics:{label:string;value:string}[];notes:string[];tables:ReportTable[]};
 const text=(value:unknown)=>value===null||value===undefined||value===''?'—':String(value);
 const cash=(value:unknown)=>money(Number(value||0));

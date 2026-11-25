@@ -5,7 +5,7 @@ import path from 'node:path';
 import sharp from 'sharp';
 import type {ReportDocument,ReportTable} from './report-document';
 
-export async function reportPdf(report:ReportDocument,{customerCopy=false}:{customerCopy?:boolean}={}){
+export async function reportPdf(report:ReportDocument,{customerCopy=false,portrait=false}:{customerCopy?:boolean;portrait?:boolean}={}){
  const pdf=await PDFDocument.create();pdf.registerFontkit(fontkit);
  pdf.setTitle(report.title==='Business report'?'HH MEDICS Business Report':report.title==='Monthly closing'?'HH MEDICS Monthly Closing':'HH MEDICS '+report.title);pdf.setAuthor('HH MEDICS');pdf.setSubject(`${report.scope} | ${report.period}`);
  const [regularBytes,boldBytes,logoBytes]=await Promise.all([
@@ -14,7 +14,7 @@ export async function reportPdf(report:ReportDocument,{customerCopy=false}:{cust
   sharp(path.join(process.cwd(),'public/hh-medics-logo.png')).trim().png().toBuffer(),
  ]);
  const regular=await pdf.embedFont(regularBytes,{subset:true}),bold=await pdf.embedFont(boldBytes,{subset:true}),logo=await pdf.embedPng(logoBytes);
- const [width,height]=report.title==='Business report'?PageSizes.Legal:[PageSizes.A4[1],PageSizes.A4[0]];
+ const [width,height]=portrait?PageSizes.A4:report.title==='Business report'?PageSizes.Legal:[PageSizes.A4[1],PageSizes.A4[0]];
  const margin=36,bodyWidth=width-margin*2;
  const ink=rgb(.14,.12,.23),muted=rgb(.48,.48,.56),purple=rgb(.34,.26,.72),light=rgb(.96,.96,.98),line=rgb(.9,.9,.94);
  let page!:PDFPage,y=0;
@@ -66,7 +66,17 @@ export async function reportPdf(report:ReportDocument,{customerCopy=false}:{cust
   const headerLines=section.headers.map((h,i)=>wrap(h,bold,fontSize,widths[i]-14));
   const headerHeight=Math.max(...headerLines.map(h=>h.length))*lineHeight+15;
   const drawHeader=()=>{page.drawRectangle({x:margin,y:y-headerHeight,width:bodyWidth,height:headerHeight,color:purple});let x=margin;headerLines.forEach((lines,i)=>{lines.forEach((v,n)=>draw(v,x+7,y-12-n*lineHeight,fontSize,bold,rgb(1,1,1)));x+=widths[i];});y-=headerHeight;};
-  ensure(75+headerHeight);draw(section.title,margin,y,14,bold);y-=22;
+  const noteHeight=section.note?wrap(section.note,regular,8,bodyWidth).length*13+5:0;
+  ensure(75+headerHeight+(section.barcode?56:0)+Math.min(noteHeight,120));
+  for(const title of wrap(section.title,bold,14,bodyWidth)){draw(title,margin,y,14,bold);y-=18;}
+  y-=4;
+  if(section.barcode){
+    const {bars,width,value}=section.barcode;
+    const moduleWidth=Math.min(1.05,bodyWidth/width);
+    for(const bar of bars)page.drawRectangle({x:margin+bar.x*moduleWidth,y:y-31,width:bar.width*moduleWidth,height:31,color:rgb(0,0,0)});
+    draw(value,margin+10*moduleWidth,y-43,8,regular);
+    y-=56;
+  }
   if(section.note)paragraph(section.note,8);
   ensure(headerHeight+36);drawHeader();
   const rows=section.rows.length?section.rows:[section.headers.map((_,i)=>i===0?'No records in this selection.':'')];

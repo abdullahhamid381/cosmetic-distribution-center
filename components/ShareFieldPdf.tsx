@@ -1,13 +1,18 @@
 ﻿'use client';
 
 import {useState} from 'react';
-import {Download, Share2} from 'lucide-react';
+import {Download, MessageCircle, Share2} from 'lucide-react';
 
-export function ShareFieldPdf({kind, id, label}: {kind:'invoice'|'receipt'|'combined'; id:string; label?:string}) {
+export function ShareFieldPdf({kind, id, label, customerPhone}: {kind:'invoice'|'receipt'|'combined'; id:string; label?:string; customerPhone?:string|null}) {
   const [busy, setBusy] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [message, setMessage] = useState('');
   const href = '/api/field/pdf/'+kind+'/'+id;
+  const phone = customerPhone?.trim().replace(/[\s().-]/g,'') ?? '';
+  const recipient = /^03\d{9}$/.test(phone) ? '92'+phone.slice(1)
+    : /^3\d{9}$/.test(phone) ? '92'+phone
+      : /^(?:\+|00)[1-9]\d{7,14}$/.test(phone) ? phone.replace(/^(?:\+|00)/,'')
+        : /^923\d{9}$/.test(phone) ? phone : '';
 
   async function share() {
     if (file) {
@@ -59,6 +64,9 @@ export function ShareFieldPdf({kind, id, label}: {kind:'invoice'|'receipt'|'comb
         <Share2 size={15} aria-hidden="true"/> {busy ? 'Preparing PDF…' : label || (file ? 'Share PDF' : 'Share via WhatsApp')}
       </button>
       <a href={href} className="btn"><Download size={15} aria-hidden="true"/> PDF</a>
+      {kind==='receipt' && recipient && <a className="btn" href={`https://wa.me/${recipient}`} target="_blank" rel="noopener noreferrer">
+        <MessageCircle size={15} aria-hidden="true"/> Customer WhatsApp
+      </a>}
     </div>
     {message && <small className="muted" role="status">{message}</small>}
   </div>;

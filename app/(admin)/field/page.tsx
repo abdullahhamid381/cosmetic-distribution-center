@@ -82,7 +82,6 @@ export default async function FieldSales({searchParams}: {searchParams:Promise<{
       AND ($2::bigint IS NULL OR s.assigned_sales_id=$2)
       ORDER BY (i.total>i.paid_total+i.credit_total) DESC,i.issue_date DESC,i.id DESC`,params),
     query(`SELECT p.id,p.payment_no,p.amount,p.method,u.full_name AS collector,to_char(p.payment_date,'DD Mon YYYY') AS date,
-      entry.details->>'invoiceId' AS invoice_id,
       COALESCE(entry.details ? 'combinedInvoices',false) AS combined
       FROM payments p JOIN shops s ON s.id=p.shop_id LEFT JOIN users u ON u.id=p.created_by
       LEFT JOIN LATERAL (
@@ -110,6 +109,7 @@ export default async function FieldSales({searchParams}: {searchParams:Promise<{
       <p>{owner === null ? 'Manage shop assignments, stock bookings, and collections.' : 'Register shops, book stock, and collect invoice payments.'}</p></div>
       <div className="actions">
         {owner===null && <Link className="btn" href="/field/access">Manage shop access</Link>}
+        {owner===null && <Link className="btn" href="/field/collections">All collections</Link>}
         <Link className="btn primary" href={`/field?new=1${shop?'&shop='+shop.id:''}#register-shop`}><Store size={16}/> Register shop</Link>
       </div></div>
 
@@ -139,10 +139,8 @@ export default async function FieldSales({searchParams}: {searchParams:Promise<{
         <p className="card-sub">Registered by {shop.registered_by || 'not recorded'} · Assigned seller {shop.seller || 'unassigned'}</p></div></div>
         {received && <div className="success-note">
           <p role="status">Payment {received.payment_no} recorded.</p>
-          {received.invoice_id && <ShareFieldPdf key={'invoice-'+received.invoice_id} kind="invoice"
-            id={String(received.invoice_id)} label="Share updated invoice"/>}
-          <ShareFieldPdf key={'receipt-'+received.id} kind="receipt" id={String(received.id)}
-            label={received.combined?'Share combined statement and receipt':'Share payment receipt'}/>
+          <ShareFieldPdf key={'receipt-'+received.id} kind="receipt" id={String(received.id)} customerPhone={shop.phone}
+            label={received.combined?'Share receipt with updated invoices':'Share receipt with updated invoice'}/>
         </div>}
         <details><summary>Edit shop details{owner===null?' or seller assignment':''}</summary>
           <DepartmentForm key={shop.id} action={saveFieldShop} submitLabel="Save shop"><ShopFields shop={shop} agents={agents}/></DepartmentForm>
@@ -212,7 +210,7 @@ export default async function FieldSales({searchParams}: {searchParams:Promise<{
           {!payments.length ? <p className="empty">No collections recorded.</p> : <div className="table-wrap"><table><thead><tr><th>Receipt</th><th>Collected by</th><th>Amount</th><th>Share</th></tr></thead>
             <tbody>{payments.map(payment => <tr key={payment.id}><td>{payment.payment_no}<br/><small>{payment.date} · {payment.method}{payment.combined?' · Combined':''}</small></td>
               <td>{payment.collector || 'Not recorded'}</td><td>{money(payment.amount)}</td><td><ShareFieldPdf kind="receipt"
-                id={String(payment.id)} label={payment.combined?'Share combined PDF':undefined}/></td></tr>)}</tbody></table></div>}
+                id={String(payment.id)} customerPhone={shop.phone} label={payment.combined?'Share receipt with updated invoices':'Share receipt with updated invoice'}/></td></tr>)}</tbody></table></div>}
         </section>
       </div>
 
