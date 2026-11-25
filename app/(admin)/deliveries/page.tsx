@@ -1,0 +1,15 @@
+import {RecordActions} from '@/components/RecordActions';
+import {query} from '@/lib/db';
+import {requireRole} from '@/lib/auth';
+import {markDelivered} from '@/app/actions';
+import {formatDate} from '@/lib/utils';
+import {requireUser} from '@/lib/auth';
+import Link from 'next/link';
+export default async function Deliveries(){await requireRole('ADMIN','MANAGER','WAREHOUSE','DELIVERY');const [list,user]=await Promise.all([query(`SELECT d.*,s.shop_name,w.name AS warehouse_name,i.invoice_no,i.id AS invoice_id,
+  (SELECT COALESCE(SUM(quantity),0) FROM delivery_items di WHERE di.delivery_id=d.id) AS units,
+  (SELECT COUNT(*) FROM delivery_items di WHERE di.delivery_id=d.id) AS lines
+  FROM deliveries d JOIN shops s ON s.id=d.shop_id JOIN warehouses w ON w.id=d.warehouse_id LEFT JOIN invoices i ON i.delivery_id=d.id ORDER BY d.id DESC LIMIT 100`),requireUser()]);
+ const allowed=['ADMIN','MANAGER','DELIVERY'].includes(user.role);
+ return <><div className="page-title-row"><div className="page-title"><span className="eyebrow">DISPATCH / TRANSPORT</span><h1>Shop Deliveries</h1><p>Which shop received which dispatch, from which warehouse, and how many units.</p></div>{['ADMIN','MANAGER'].includes(user.role)&&<Link href="/sales/new" className="btn primary">+ New Dispatch</Link>}</div><div className="card"><div className="table-wrap"><table><thead><tr><th>Delivery</th><th>Shop</th><th>Warehouse</th><th>Dispatch Date</th><th className="align-right">Units</th><th>Invoice</th><th>Status</th><th>Received By</th><th>Actions</th></tr></thead><tbody>{list.map(d=><tr key={d.id}><td className="table-name mono">{d.delivery_no}</td><td>{['ADMIN','MANAGER'].includes(user.role)?<Link href={'/shops/'+d.shop_id}>{d.shop_name}</Link>:d.shop_name}</td><td>{d.warehouse_name}</td><td>{formatDate(d.created_at)}</td><td className="align-right"><b>{d.units}</b></td><td>{['ADMIN','MANAGER'].includes(user.role)?<Link href={'/invoices/'+d.invoice_id}>{d.invoice_no}</Link>:d.invoice_no}</td><td><span className={`badge ${d.status==='DISPATCHED'?'pending':''}`}>{d.status}</span></td><td>{d.recipient_name||'—'}</td><td><RecordActions entity="deliveries" id={d.id}/></td></tr>)}</tbody></table>{!list.length&&<div className="empty">Dispatch history will appear after your first invoice.</div>}</div></div>
+ {allowed&&list.some(d=>d.status==='DISPATCHED')&&<div className="card section-gap"><h2>Confirm a delivered shipment</h2><p className="card-sub">Mark stock received by the shop and retain proof-of-delivery details.</p><form action={markDelivered} className="inline-form section-gap"><div className="field"><label>Dispatch</label><select name="delivery_id">{list.filter(d=>d.status==='DISPATCHED').map(d=><option value={d.id} key={d.id}>{d.delivery_no} — {d.shop_name}</option>)}</select></div><div className="field"><label>Received by *</label><input name="recipient_name" required placeholder="Recipient full name"/></div><div className="field"><label>Delivery note</label><input name="tracking_note" placeholder="Receiver signature reference"/></div><button className="btn primary" type="submit">Confirm Delivery</button></form></div>}</>;
+}

@@ -1,0 +1,8 @@
+import {query} from '@/lib/db';
+import {money} from '@/lib/utils';
+import {dispatchCostLabels,type DispatchCostBasis} from '@/lib/dispatch-cost';
+export async function DispatchCostBreakdown({invoiceId}:{invoiceId:number}){
+ const items=await query(`SELECT ii.*,p.name,COALESCE(r.qty,0) AS returned FROM invoice_items ii JOIN products p ON p.id=ii.product_id LEFT JOIN LATERAL(SELECT SUM(quantity) AS qty FROM sales_return_items WHERE invoice_item_id=ii.id) r ON true WHERE ii.invoice_id=$1 ORDER BY ii.id`,[invoiceId]);
+ const total=items.reduce((s,l)=>s+Math.round(Number(l.unit_cost)*100)*(Number(l.quantity)-Number(l.returned)),0)/100;
+ return <section className="card section-gap no-print"><h2>Private delivery cost breakdown</h2><p className="card-sub">Costs saved for this delivery. Full cost = manufacturing + box cost per unit. Selected costs feed profit calculations; customer invoice prices stay based on retail and shop discount.</p><div className="table-wrap section-gap"><table><thead><tr><th>Product</th><th>Qty / returned</th><th>Manufacturing / unit</th><th>Box / unit</th><th>Cost selected</th><th>Applied cost / unit</th><th>Cost after returns</th></tr></thead><tbody>{items.map(l=><tr key={l.id}><td>{l.name}</td><td>{l.quantity} / {l.returned}</td><td>{l.manufacturing_unit_cost===null?'Not recorded':money(l.manufacturing_unit_cost)}</td><td>{l.box_unit_cost===null?'Not recorded':money(l.box_unit_cost)}</td><td>{dispatchCostLabels[l.cost_basis as DispatchCostBasis]}</td><td>{money(l.unit_cost)}</td><td>{money(Number(l.unit_cost)*(Number(l.quantity)-Number(l.returned)))}</td></tr>)}</tbody></table></div><p className="section-gap"><b>Total selected product cost after returns: {money(total)}</b></p></section>;
+}

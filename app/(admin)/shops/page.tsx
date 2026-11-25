@@ -1,0 +1,15 @@
+import {RecordActions} from '@/components/RecordActions';
+import Link from 'next/link';
+import {requireRole} from '@/lib/auth';
+import {createShop} from '@/app/actions';
+import {listShops} from '@/lib/data';
+import {requireUser} from '@/lib/auth';
+import {money} from '@/lib/utils';
+export default async function Shops(){await requireRole('ADMIN','MANAGER','ACCOUNTS');
+ const [shops,user]=await Promise.all([listShops(),requireUser()]);
+ return <><div className="page-title-row"><div className="page-title"><span className="eyebrow">PARTNERS / PRICING</span><h1>Shop Directory</h1><p>Every retailer’s stock, discount percentage, sales, payments and outstanding balance.</p></div><div className="actions"><span className="badge blue">{shops.length} shops</span>{["ADMIN","MANAGER"].includes(user.role)&&<Link href="/sales/new" className="btn primary">+ New Delivery</Link>}</div></div><div className="card"><div className="card-header"><h2>Registered retail partners</h2><span className="card-sub">Click a shop to open its complete ledger and product discounts.</span></div><div className="table-wrap"><table><thead><tr><th>Shop</th><th>Area</th><th>Phone</th><th>Pricing</th><th className="align-right">Invoiced</th><th className="align-right">Pending</th><th></th><th>Actions</th></tr></thead><tbody>{shops.map(s=><tr key={s.id}><td className="table-name">{s.shop_name}<div className="muted mono">{s.store_code}</div>{!s.active&&<span className="badge red">Archived</span>}</td><td>{s.city||'—'}</td><td>{s.phone||'—'}</td><td><span className="badge blue">Set on each invoice</span></td><td className="align-right">{money(s.invoiced)}</td><td className="align-right money-negative">{money(s.pending)}</td><td><Link href={`/shops/${s.id}`} className="btn">Details →</Link></td><td><div className="actions">{s.active&&["ADMIN","MANAGER"].includes(user.role)&&<Link href={`/sales/new?shop=${s.id}`} className="btn primary">+ New Delivery</Link>}<RecordActions entity="shops" id={s.id}/></div></td></tr>)}</tbody></table>{!shops.length&&<div className="empty">Add your first shop below.</div>}</div></div>
+ {['ADMIN','MANAGER'].includes(user.role)&&<div className="card section-gap"><div className="card-header"><h2>Register a new shop</h2></div><form action={createShop} className="form-grid">
+ {[['Shop name *','shop_name','Al-Madina Cosmetics'],['Owner / Contact','contact_name','Shop proprietor'],['Phone / WhatsApp','phone','0300 0000000'],['City','city','Bhakkar'],['Area / Sales Region','region','Mandi Town'],['Full Address','address','Street and area']].map(x=><div className="field" key={x[1]}><label>{x[0]}</label><input name={x[1]} required={x[1]==='shop_name'} placeholder={x[2]}/></div>)}
+ <div className="field"><label>Credit limit (Rs., 0 = no set limit)</label><input type="number" name="credit_limit" min="0" step="0.01" defaultValue="0" required/></div><div className="field"><label>Payment terms (days)</label><input type="number" name="payment_terms_days" min="0" max="365" defaultValue="30" required/></div><div className="field" style={{justifyContent:'end'}}><button className="btn primary">Register Shop</button></div>
+ </form></div>}</>;
+}

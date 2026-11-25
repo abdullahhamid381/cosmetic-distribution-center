@@ -1,0 +1,12 @@
+node_modules/
+.tmp/
+.next/
+out/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.log
+.DS_Store
+*.zip

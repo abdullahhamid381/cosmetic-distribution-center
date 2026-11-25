@@ -1,0 +1,8 @@
+'use client';
+import {useState} from 'react';
+import {DepartmentForm} from './DepartmentForm';
+import {savePendingOrderItems} from '@/app/sales-department-actions';
+export function OrderItemsEditor({orderId,batches,initial}:{orderId:string;batches:{id:string;label:string}[];initial:{batch:string;qty:number}[]}){
+ const [lines,setLines]=useState(initial.map((l,i)=>({...l,key:i}))),[next,setNext]=useState(initial.length);
+ return <DepartmentForm action={savePendingOrderItems} submitLabel="Save order products"><input type="hidden" name="order_id" value={orderId}/>{lines.map(l=><div className="field span-2" key={l.key}><div className="inline-form"><div className="field"><label htmlFor={'edit-batch-'+l.key}>Product / batch</label><select id={'edit-batch-'+l.key} name="batch_id" value={l.batch} required onChange={e=>setLines(lines.map(row=>row.key===l.key?{...row,batch:e.target.value}:row))}><option value="">Select product batch</option>{batches.filter(b=>b.id===l.batch||!lines.some(row=>row.batch===b.id)).map(b=><option key={b.id} value={b.id}>{b.label}</option>)}</select></div><div className="field"><label htmlFor={'edit-qty-'+l.key}>Quantity</label><input id={'edit-qty-'+l.key} name="quantity" type="number" min="1" value={l.qty} required onChange={e=>setLines(lines.map(row=>row.key===l.key?{...row,qty:Number(e.target.value)}:row))}/></div><button className="btn" type="button" disabled={lines.length===1} onClick={()=>setLines(lines.filter(row=>row.key!==l.key))}>Remove</button></div></div>)}<div className="field span-2"><button className="btn" type="button" disabled={lines.length>=50} onClick={()=>{setLines([...lines,{batch:'',qty:1,key:next}]);setNext(next+1);}}>+ Add product</button></div></DepartmentForm>;
+}

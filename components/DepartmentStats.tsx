@@ -1,0 +1,1 @@
+export function DepartmentStats({items}:{items:[string,string|number][]}){return <div className="stats-grid">{items.map(([label,value])=><div className="stat" key={label}><span className="stat-top">{label}</span><strong>{value}</strong></div>)}</div>;}

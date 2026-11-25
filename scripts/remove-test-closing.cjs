@@ -1,0 +1,28 @@
+const pg=require('pg'),assert=require('node:assert/strict'),fs=require('node:fs');
+require('dotenv').config({path:'.env.local',quiet:true});
+const c=new pg.Client({connectionString:process.env.DATABASE_URL,ssl:{rejectUnauthorized:true},connectionTimeoutMillis:10000});
+const testStatement=s=>s?.shopName==='QA Store'&&s?.closing===100&&s?.currentSales===100;
+const testDocument=s=>s?.financials?.netProfit===-100&&Object.keys(s.financials).length===1&&s?.statements?.length===1&&s.statements.every(testStatement);
+(async()=>{try{
+ await c.connect();await c.query('BEGIN');
+ await c.query('LOCK TABLE public.monthly_closing_documents,public.monthly_closings,public.monthly_closing_revisions IN SHARE ROW EXCLUSIVE MODE');
+ const financials=async()=>(await c.query('SELECT (SELECT COALESCE(sum(total),0) FROM invoices) AS invoices,(SELECT COALESCE(sum(amount),0) FROM payments) AS payments,(SELECT COALESCE(sum(amount),0) FROM expenses) AS expenses')).rows;
+ const before=await financials();
+ const documents=(await c.query('SELECT * FROM public.monthly_closing_documents FOR UPDATE')).rows.filter(r=>testDocument(r.snapshot));
+ const statements=(await c.query('SELECT * FROM public.monthly_closings FOR UPDATE')).rows.filter(r=>testStatement(r.snapshot));
+ const revisions=(await c.query('SELECT * FROM public.monthly_closing_revisions FOR UPDATE')).rows.filter(r=>r.reason==='QA reopening'&&r.snapshot.documents?.length&&r.snapshot.documents.every(d=>testDocument(d.snapshot))&&r.snapshot.statements.every(s=>testStatement(s.snapshot)));
+ assert.equal(documents.length,1,'Unexpected test document count; stop for review.');
+ assert.equal(statements.length,1,'Unexpected test statement count; stop for review.');
+ assert.equal(revisions.length,1,'Unexpected test revision count; stop for review.');
+ fs.mkdirSync('.tmp',{recursive:true});fs.writeFileSync('.tmp/closing-test-cleanup-backup.json',JSON.stringify({documents,statements,revisions},null,2));
+ const docIds=[...new Set([...documents.map(r=>r.id),...revisions.flatMap(r=>r.snapshot.documents.map(d=>d.id))])];
+ const statementIds=[...new Set([...statements.map(r=>r.id),...revisions.flatMap(r=>r.snapshot.statements.map(s=>s.id))])];
+ const revisionIds=revisions.map(r=>r.id);
+ await c.query("UPDATE public.audit_logs SET action='QA_TEST_'||action,details=COALESCE(details,'{}'::jsonb)||$1::jsonb WHERE user_id=1 AND ((entity='monthly_closing_document' AND action='SAVE_CLOSING_DOCUMENT' AND entity_id=ANY($2::bigint[])) OR (entity='monthly_closing' AND action='CLOSE_MONTH' AND entity_id=ANY($3::bigint[])) OR (entity='monthly_closing_revision' AND action='REOPEN_CLOSING' AND entity_id=ANY($4::bigint[])))",[JSON.stringify({testArtifact:true,correction:'Test closing removed; original entry retained for traceability.'}),docIds,statementIds,revisionIds]);
+ await c.query('DELETE FROM public.monthly_closing_documents WHERE id=ANY($1::bigint[])',[documents.map(r=>r.id)]);
+ await c.query('DELETE FROM public.monthly_closings WHERE id=ANY($1::bigint[])',[statements.map(r=>r.id)]);
+ await c.query('DELETE FROM public.monthly_closing_revisions WHERE id=ANY($1::bigint[])',[revisionIds]);
+ await c.query("INSERT INTO public.audit_logs(action,entity,details) VALUES('REMOVE_TEST_CLOSING','monthly_closing_document',$1)",[JSON.stringify({reason:'Removed incomplete QA snapshot; restored open live closing view.',documentIds:docIds,statementIds,revisionIds})]);
+ assert.deepEqual(await financials(),before);
+ await c.query('COMMIT');console.log('Incomplete QA closing removed with local backup and audit correction. Invoice, payment and expense totals unchanged.');
+}catch(e){await c.query('ROLLBACK').catch(()=>{});console.error(e.message);process.exitCode=1;}finally{await c.end().catch(()=>{});}})();

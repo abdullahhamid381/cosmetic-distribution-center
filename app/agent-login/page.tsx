@@ -1,0 +1,8 @@
+import Link from 'next/link';
+import {BrandLogo} from '@/components/BrandLogo';
+import {login} from '@/app/actions';
+export const dynamic='force-dynamic';
+export default async function AgentLogin({searchParams}:{searchParams:Promise<{error?:string}>}){
+ const {error}=await searchParams;
+ return <div className="login-page"><div className="login-side"><BrandLogo className="login-brand-logo"/><h1>Your sales.<br/><em>Your workspace.</em></h1><p>Submit customer orders, select products and quantities, report advance payments and track your deliveries.</p><div className="login-feature">Your customers, orders and commissions are private to your account.</div></div><section className="login-form-wrap"><form action={login} className="login-card"><BrandLogo className="login-form-logo"/><h2>Sales Agent Portal</h2><p>Sign in with the account assigned by your administrator.</p><input type="hidden" name="portal_login" value="agent"/>{error&&<div className="alert error" role="alert">{error==='unavailable'?'The sign-in service is temporarily unavailable. Please try again shortly.':error==='disabled'?'Your portal access is not enabled. Contact your administrator.':'Unable to sign in. Check your email, password and portal access.'}</div>}<label>Email address<input type="email" name="email" required autoComplete="username"/></label><label>Password<input type="password" name="password" required autoComplete="current-password"/></label><button className="btn primary full" type="submit">Sign in to my portal</button><small><Link href="/login">Administration / staff sign in</Link></small><small><Link href="/install">Install mobile app</Link></small></form></section></div>;
+}
