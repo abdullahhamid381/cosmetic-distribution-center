@@ -213,3 +213,11 @@ Both clients send requests to the same hosted application and Neon PostgreSQL da
 5. Deploy over HTTPS and enable automatic deployment for the selected branch. Check the deployment log, then open `/api/health` and confirm it reports a connected database. Verify `/install` on the hosted domain and test the portal on a phone with your existing account.
 
 Successful pushes to the connected branch trigger Hostinger builds. Both the browser portal and the installed app load the deployed release from that same domain on a fresh open or reload. See [Hostinger's Node.js Web App setup](https://www.hostinger.com/support/how-to-deploy-a-nodejs-website-in-hostinger/).
+
+## Field sales
+
+Run `npm run db:migrate -- --field-sales-only` against the deployment database before releasing the Field Sales module. The migration creates the stock-booking table and indexes and adds a nullable payment submission ID to prevent duplicate collections on retry.
+
+Create a **Field Sales** account in **Staff & Roles**, and use **Sales & Distribution → Field Sales Shop Access** to assign it to individual shops. Administrators and managers can grant, reassign, or revoke access. A shop registered by a Field Sales user awaits assignment. Existing Sales Agent accounts continue to use their assigned shops and keep their separate agent portal. Booking quantities go into the pending queue and are deducted from inventory only when a manager dispatches the booking and issues its invoice. Approved shop pricing and inventory checks use the existing dispatch workflow.
+
+Collections are applied to the selected invoice, and the collector is recorded from the current session. Field activity stores the server date and time and the device coordinates only when the user attaches a location. HTTPS and browser location permission are required on phones. The PDF button opens the device share sheet on browsers that support file sharing. Choose WhatsApp there, or download the PDF and attach it manually.

@@ -20,6 +20,6 @@ export function validatePct(value: unknown) {
   return Math.round(v*100)/100;
 }
 export function dateISO(value: string) { if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value))) throw new Error('Valid YYYY-MM-DD date required'); return value; }
-export const roleSchema = z.enum(['ADMIN','MANAGER','WAREHOUSE','SALES','ACCOUNTS','DELIVERY']);
-export const roleLabel=(role:string)=>role==='SALES'?'Sales Agent':role;
+export const roleSchema = z.enum(['ADMIN','MANAGER','WAREHOUSE','SALES','FIELD_SALES','ACCOUNTS','DELIVERY']);
+export const roleLabel=(role:string)=>role==='SALES'?'Sales Agent':role==='FIELD_SALES'?'Field Sales':role;
 export const formatDate = (value: string | Date | null | undefined) => value ? new Date(value).toLocaleDateString('en-GB') : '—';

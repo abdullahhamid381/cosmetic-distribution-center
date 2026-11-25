@@ -8,11 +8,14 @@ const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: 
 try {
   await client.connect();
   await client.query('BEGIN');
-  await client.query(readFileSync(new URL('../database/schema.sql', import.meta.url), 'utf8'));
+  if (!process.argv.includes('--field-sales-only')) {
+    await client.query(readFileSync(new URL('../database/schema.sql', import.meta.url), 'utf8'));
+  }
+  await client.query(readFileSync(new URL('../database/field-sales.sql', import.meta.url), 'utf8'));
   await client.query('COMMIT');
   console.log('Database schema created/updated successfully.');
 } catch(e) {
   await client.query('ROLLBACK').catch(()=>{});
-  console.error('Database migration failed:', e.message);
+  console.error('Database migration failed:', e.message || e.code || 'Unknown database error');
   process.exitCode = 1;
 } finally { await client.end().catch(()=>{}); }

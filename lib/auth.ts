@@ -5,7 +5,7 @@ import { redirect } from 'next/navigation';
 import { SignJWT, jwtVerify } from 'jose';
 import { query } from './db';
 import type { QueryResultRow } from 'pg';
-export const ROLE_NAMES = ['ADMIN','MANAGER','WAREHOUSE','SALES','ACCOUNTS','DELIVERY'] as const;
+export const ROLE_NAMES = ['ADMIN','MANAGER','WAREHOUSE','SALES','FIELD_SALES','ACCOUNTS','DELIVERY'] as const;
 export type Role = typeof ROLE_NAMES[number];
 export type CurrentUser = { id: number; name: string; email: string; role: Role };
 type DbUser = QueryResultRow & { id: string; full_name: string; email: string; role: Role;session_version:number };
@@ -44,6 +44,7 @@ export async function requireRole(...roles: Role[]) {
   const user = await requireUser();
   if (!roles.includes(user.role)) {
     if(user.role==='SALES')redirect('/agent');
+    if(user.role==='FIELD_SALES')redirect('/field');
     throw new Error('You do not have permission to perform this action.');
   }
   return user;

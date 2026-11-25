@@ -5,7 +5,7 @@ import path from 'node:path';
 import sharp from 'sharp';
 import type {ReportDocument,ReportTable} from './report-document';
 
-export async function reportPdf(report:ReportDocument){
+export async function reportPdf(report:ReportDocument,{customerCopy=false}:{customerCopy?:boolean}={}){
  const pdf=await PDFDocument.create();pdf.registerFontkit(fontkit);
  pdf.setTitle(report.title==='Business report'?'HH MEDICS Business Report':report.title==='Monthly closing'?'HH MEDICS Monthly Closing':'HH MEDICS '+report.title);pdf.setAuthor('HH MEDICS');pdf.setSubject(`${report.scope} | ${report.period}`);
  const [regularBytes,boldBytes,logoBytes]=await Promise.all([
@@ -40,7 +40,7 @@ export async function reportPdf(report:ReportDocument){
   page.drawImage(logo,{x:margin,y:height-32-imageHeight,width:imageWidth,height:imageHeight});
   let titleSize=13;while(bold.widthOfTextAtSize(report.title.toUpperCase(),titleSize)>200&&titleSize>8)titleSize--;
   draw(report.title.toUpperCase(),width-margin-200,height-43,titleSize,bold,purple);
-  draw(report.title==='Detailed audit report'?'Private audit report | PKT':'Private management report | PKR',width-margin-162,height-59,8,regular,muted);
+  draw(customerCopy?'Customer copy | PKR':report.title==='Detailed audit report'?'Private audit report | PKT':'Private management report | PKR',width-margin-162,height-59,8,regular,muted);
   page.drawLine({start:{x:margin,y:height-78},end:{x:width-margin,y:height-78},thickness:1,color:line});
  }
  function ensure(space:number){if(y-space<55)newPage();}
@@ -48,7 +48,7 @@ export async function reportPdf(report:ReportDocument){
  newPage();
  draw(report.title,margin,y,25,bold);y-=28;
  paragraph(`${report.scope} | ${report.period}`,11,ink);
- paragraph(`Generated ${report.generated} | Prepared by ${report.preparedBy}`,8);
+ paragraph(customerCopy?`Generated ${report.generated}`:`Generated ${report.generated} | Prepared by ${report.preparedBy}`,8);
  const metricWidth=(bodyWidth-24)/3;
  for(let index=0;index<report.metrics.length;index++){
   if(index%3===0){ensure(70);if(index)y-=70;}
@@ -87,7 +87,7 @@ export async function reportPdf(report:ReportDocument){
  for(const section of report.tables)table(section);
  pdf.getPages().forEach((p,index)=>{
   page=p;page.drawLine({start:{x:margin,y:37},end:{x:width-margin,y:37},thickness:.5,color:line});
-  draw('HH MEDICS | Confidential business information',margin,23,7,regular,muted);
+  draw(customerCopy?'HH MEDICS | Customer copy':'HH MEDICS | Confidential business information',margin,23,7,regular,muted);
   const generated=`Generated: ${report.generated}`;
   draw(generated,(width-regular.widthOfTextAtSize(generated,7))/2,23,7,regular,muted);
   const count=`Page ${index+1} of ${pdf.getPageCount()}`;

@@ -3,7 +3,7 @@ import { unstable_rethrow, redirect } from 'next/navigation';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { query, transaction } from '@/lib/db';
-import { createSession, destroySession, requireRole, requireUser,currentUser } from '@/lib/auth';
+import { createSession, destroySession, requireRole, requireUser,currentUser, type CurrentUser } from '@/lib/auth';
 import { amount, cents, fromCents, integer, required, str, validatePct, dateISO, roleSchema } from '@/lib/utils';
 import { revalidatePath } from 'next/cache';
 import type { PoolClient } from 'pg';
@@ -14,6 +14,7 @@ import {nextStoreInvoiceNumber} from '@/lib/store-invoice-number';
 import {invoiceDueDate} from '@/lib/invoice-dates';
 import {pakistanToday} from '@/lib/closing-period';
 import {validDate} from '@/lib/sales-team';
+import type {FieldCollectionLine} from '@/lib/field-sales';
 
 const done = (path:string) => { revalidatePath('/', 'layout'); redirect(path); };
 async function audit(tx:PoolClient, uid:number, action:string, entity:string, entityId:number, details:Record<string,unknown> = {}) {
@@ -28,7 +29,7 @@ export async function login(form:FormData) {
     if (!user || !user.active || !(await bcrypt.compare(password, user.password_hash)) || (agentLogin && user.role!=='SALES')) redirect(loginPath+'?error=invalid');
     if(user.role==='SALES' && !(await query('SELECT id FROM sales_agents WHERE user_id=$1 AND active=true',[user.id]))[0])redirect('/agent-login?error=disabled');
     await createSession(Number(user.id));
-    redirect(user.role==='DELIVERY'?'/deliveries':user.role==='WAREHOUSE'?'/inventory':user.role==='SALES'?'/agent':'/dashboard');
+    redirect(user.role==='DELIVERY'?'/deliveries':user.role==='WAREHOUSE'?'/inventory':user.role==='SALES'?'/agent':user.role==='FIELD_SALES'?'/field':'/dashboard');
   } catch(error) {
     unstable_rethrow(error);
     const code=(error as {code?:unknown}|null)?.code;
@@ -226,6 +227,7 @@ export async function createSale(form:FormData) {
   const shopId=integer(form.get('shop_id'),'Shop');
   const warehouseId=integer(form.get('warehouse_id'),'Warehouse');
   const lines=z.array(saleLine).min(1).max(75).parse(JSON.parse(required(form,'lines')));
+  const bookingId=str(form,'field_booking_id')?integer(form.get('field_booking_id'),'Booking'):null;
   const brokerId=str(form,'broker_id')?integer(form.get('broker_id'),'Broker'):null;
   const brokerPct=brokerId?validatePct(required(form,'broker_pct')):0;
   if(lines.some(line=>Math.round((line.discountPct+brokerPct)*100)>10000))throw new DispatchValidationError('Shop and broker percentages combined cannot exceed 100%.');
@@ -236,6 +238,11 @@ export async function createSale(form:FormData) {
     // Lock the shop and batches, protecting credit limits and stock against concurrent sales.
     const shop=(await tx.query('SELECT * FROM shops WHERE id=$1 AND active=true FOR UPDATE',[shopId])).rows[0];
     if(!shop) throw new DispatchValidationError('Shop is inactive or missing');
+    const booking=bookingId===null?null:(await tx.query(
+      "SELECT items FROM field_stock_bookings WHERE id=$1 AND shop_id=$2 AND status='PENDING' FOR UPDATE",
+      [bookingId,shopId],
+    )).rows[0];
+    if(bookingId!==null&&!booking)throw new DispatchValidationError('This booking is no longer pending for the selected shop.');
     if(brokerId&&!(await tx.query('SELECT id FROM sales_brokers WHERE id=$1 AND active=true FOR SHARE',[brokerId])).rows[0])throw new DispatchValidationError('Choose an active broker.');
     const outgoing:{batch:any;qty:number;retailC:number;tradeC:number;unitC:number;costC:number;pct:number;lineC:number;basis:DispatchCostBasis;manufacturing:number;box:number;first:number;second:number;companyPrice:number}[]=[];
     let totalC=0, subtotalC=0;
@@ -264,6 +271,17 @@ export async function createSale(form:FormData) {
       const lineC=lineQty*unitC;
       totalC+=lineC;subtotalC+=lineQty*retailC;
       outgoing.push({batch:row,qty:lineQty,retailC,tradeC,unitC,costC,pct,lineC,basis,manufacturing,box,first,second,companyPrice});
+      }
+    }
+    if(booking){
+      const dispatched=new Map<number,number>();
+      for(const line of outgoing){
+        const productId=Number(line.batch.product_id);
+        dispatched.set(productId,(dispatched.get(productId)??0)+line.qty);
+      }
+      const requested=booking.items as {productId:number;quantity:number}[];
+      if(requested.length!==dispatched.size||requested.some(line=>dispatched.get(line.productId)!==line.quantity)){
+        throw new DispatchValidationError('Dispatch the products and quantities requested in the field booking.');
       }
     }
     const previous=(await tx.query('SELECT COALESCE(SUM(total-paid_total-credit_total),0) AS due FROM invoices WHERE shop_id=$1',[shopId])).rows[0];
@@ -296,6 +314,11 @@ export async function createSale(form:FormData) {
       await tx.query(`INSERT INTO stock_movements(batch_id,product_id,warehouse_id,movement_type,quantity_delta,reference_type,reference_id,note,created_by)
         VALUES($1,$2,$3,'DISPATCH',$4,'DELIVERY',$5,$6,$7)`,[b.id,b.product_id,warehouseId,-l.qty,deliveryId,str(form,'note'),user.id]);
     }
+    if(bookingId!==null){
+      const {recordFieldAudit}=await import('@/lib/field-sales');
+      await tx.query("UPDATE field_stock_bookings SET status='FULFILLED',invoice_id=$2,updated_at=now() WHERE id=$1",[bookingId,createdId]);
+      await recordFieldAudit(tx,user,'FIELD_FULFILL_BOOKING','field_booking',bookingId,shopId,form,{invoiceId:createdId,deliveryId});
+    }
     await audit(tx,user.id,'CREATE_INVOICE_AND_DISPATCH','invoice',createdId,{deliveryId, total:fromCents(totalC),brokerId,brokerPct,productDiscounts:outgoing.map(l=>({productId:Number(l.batch.product_id),batchId:Number(l.batch.id),shopPercentage:l.pct,firstDiscountPct:l.first,secondDiscountPct:l.second,brokerPercentage:brokerPct,combinedPercentage:l.pct+brokerPct,quantity:l.qty}))});
   });
   done('/invoices/'+createdId);
@@ -312,6 +335,13 @@ export async function markDelivered(form:FormData) {
 }
 export async function recordPayment(form:FormData) {
   const user=await requireRole('ADMIN','MANAGER','ACCOUNTS');
+  return saveInvoicePayment(form,user,false);
+}
+export async function recordFieldPayment(form:FormData) {
+  const user=await requireRole('SALES','FIELD_SALES','ADMIN','MANAGER');
+  return saveInvoicePayment(form,user,true);
+}
+async function saveInvoicePayment(form:FormData,user:CurrentUser,field:boolean) {
   const paymentDate=validDate(required(form,'payment_date'));
   if(paymentDate>pakistanToday()) throw new Error('Payment received date cannot be in the future.');
   const receipt=await readPaymentReceipt(form);
@@ -319,34 +349,54 @@ export async function recordPayment(form:FormData) {
   if(amountC<=0) throw new Error('Amount must exceed zero');
   const method=required(form,'method');
   if(!['CASH','BANK','EASYPAISA','JAZZCASH','CHEQUE','OTHER'].includes(method)) throw new Error('Invalid payment method');
-  const invoiceId=str(form,'invoice_id')?integer(form.get('invoice_id'),'Invoice'):null;
+  const invoiceSelection=str(form,'invoice_id');
+  const combined=field&&invoiceSelection==='all';
+  const invoiceId=invoiceSelection&&!combined?integer(invoiceSelection,'Invoice'):null;
+  if(field&&!combined&&invoiceId===null)throw new Error('Choose one invoice or all open invoices.');
+  const submissionId=field?z.uuid().parse(str(form,'submission_id')):null;
+  const fieldAccess=field?await import('@/lib/field-sales'):null;
   let paymentId=0;
   await transaction(async tx=>{
-    const sh=(await tx.query('SELECT id FROM shops WHERE id=$1 FOR UPDATE',[shopId])).rows[0];
-    if(!sh) throw new Error('Shop not found');
-    const inv=await tx.query(`SELECT id,total,paid_total,credit_total FROM invoices WHERE shop_id=$1 AND total>paid_total+credit_total
+    if(fieldAccess){
+      await fieldAccess.lockFieldShop(tx,shopId,user);
+      const [alreadyRecorded]=(await tx.query(`SELECT id FROM payments
+        WHERE field_submission_id=$1 AND shop_id=$2 AND created_by=$3`,[submissionId,shopId,user.id])).rows;
+      if(alreadyRecorded){paymentId=Number(alreadyRecorded.id);return;}
+    } else {
+      const sh=(await tx.query('SELECT id FROM shops WHERE id=$1 FOR UPDATE',[shopId])).rows[0];
+      if(!sh) throw new Error('Shop not found');
+    }
+    const inv=await tx.query(`SELECT id,invoice_no,due_date::text AS due_date,total,paid_total,credit_total FROM invoices WHERE shop_id=$1 AND total>paid_total+credit_total
       ${invoiceId?'AND id=$2':''} ORDER BY due_date,id FOR UPDATE`,invoiceId?[shopId,invoiceId]:[shopId]);
     const totalDue=inv.rows.reduce((sum,r)=>sum+cents(Number(r.total)-Number(r.paid_total)-Number(r.credit_total)),0);
     if(amountC>totalDue) throw new Error('Payment exceeds open invoice balance. Unallocated advances are not supported in this version.');
     const pay=(await tx.query(`INSERT INTO payments(shop_id,amount,method,reference,note,created_by,payment_date) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
       [shopId,fromCents(amountC),method,str(form,'reference'),str(form,'note'),user.id,paymentDate])).rows[0];
     paymentId=Number(pay.id);
+    if(submissionId)await tx.query('UPDATE payments SET field_submission_id=$1 WHERE id=$2',[submissionId,paymentId]);
     await tx.query('UPDATE payments SET payment_no=$1 WHERE id=$2',[`PAY-${String(paymentId).padStart(6,'0')}`,paymentId]);
     let remaining=amountC;
+    const combinedInvoices:FieldCollectionLine[]=[];
     for (const row of inv.rows) {
       const dueC=cents(Number(row.total)-Number(row.paid_total)-Number(row.credit_total));
       const applied=Math.min(remaining,dueC);
+      if(combined)combinedInvoices.push({
+        number:String(row.invoice_no||'Invoice #'+row.id),dueDate:String(row.due_date),
+        balanceBeforeCents:dueC,appliedCents:applied,balanceAfterCents:dueC-applied,
+      });
       if(applied<=0) continue;
       await tx.query('UPDATE invoices SET paid_total=paid_total+$1 WHERE id=$2',[fromCents(applied),row.id]);
       await tx.query('INSERT INTO payment_allocations(payment_id,invoice_id,amount) VALUES($1,$2,$3)',[paymentId,row.id,fromCents(applied)]);
       remaining-=applied;
-      if(remaining===0) break;
+      if(remaining===0&&!combined) break;
     }
     if(remaining!==0) throw new Error('Payment allocation failed');
     if(receipt)await savePaymentReceipt(tx,paymentId,receipt,user.id);
-    await audit(tx,user.id,'RECORD_PAYMENT','payment',paymentId,{shopId,paymentDate});
+    if(fieldAccess) await fieldAccess.recordFieldAudit(tx,user,'FIELD_COLLECT_PAYMENT','payment',paymentId,shopId,form,
+      {invoiceId,paymentDate,amount:fromCents(amountC),method,...(combined?{combinedInvoices}:{})});
+    else await audit(tx,user.id,'RECORD_PAYMENT','payment',paymentId,{shopId,paymentDate});
   });
-  done('/payments?received='+paymentId);
+  done(field?'/field?shop='+shopId+'&received='+paymentId:'/payments?received='+paymentId);
 }
 export async function createReturn(form:FormData) {
   const user=await requireRole('ADMIN','MANAGER','WAREHOUSE');

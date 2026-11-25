@@ -1,5 +1,15 @@
-'use client';
-import Link from 'next/link';
-export default function Error({error,reset}:{error:Error & {digest?:string},reset:()=>void}){
- return <div className="card"><h2>We couldn’t complete that request</h2><p className="muted">{error.message||'An unexpected server error occurred.'}</p><div className="actions"><button className="btn primary" onClick={reset}>Try again</button><Link className="btn" href="/dashboard">Return to dashboard</Link></div></div>;
+﻿'use client';
+
+export default function WorkspaceError({error}: {error: Error & {digest?: string}}) {
+  return (
+    <section className="card" aria-labelledby="workspace-error-title">
+      <h2 id="workspace-error-title">This page couldn’t load</h2>
+      <p className="muted">Reload the page to try again. If the problem continues, contact your administrator.</p>
+      {error.digest && <p className="muted">Support reference <code>{error.digest}</code></p>}
+      <div className="actions">
+        <button className="btn primary" type="button" onClick={() => window.location.reload()}>Reload page</button>
+        <a className="btn" href="/">Return to workspace</a>
+      </div>
+    </section>
+  );
 }
