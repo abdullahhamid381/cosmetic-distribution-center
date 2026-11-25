@@ -16,7 +16,11 @@ export async function reportPdf(report:ReportDocument,{customerCopy=false,portra
  const regular=await pdf.embedFont(regularBytes,{subset:true}),bold=await pdf.embedFont(boldBytes,{subset:true}),logo=await pdf.embedPng(logoBytes);
  const [width,height]=portrait?PageSizes.A4:report.title==='Business report'?PageSizes.Legal:[PageSizes.A4[1],PageSizes.A4[0]];
  const margin=36,bodyWidth=width-margin*2;
- const ink=rgb(.14,.12,.23),muted=rgb(.48,.48,.56),purple=rgb(.34,.26,.72),light=rgb(.96,.96,.98),line=rgb(.9,.9,.94);
+ const ink=customerCopy?rgb(.094,.149,.247):rgb(.14,.12,.23);
+ const muted=customerCopy?rgb(.28,.35,.42):rgb(.48,.48,.56);
+ const accent=customerCopy?rgb(.094,.149,.247):rgb(.34,.26,.72);
+ const teal=rgb(.08,.38,.35), tealSoft=rgb(.90,.96,.94);
+ const light=customerCopy?rgb(.96,.97,.98):rgb(.96,.96,.98),line=rgb(.89,.92,.94);
  let page!:PDFPage,y=0;
  const clean=(value:string)=>String(value).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g,'');
  const wrap=(value:string,font:PDFFont,size:number,maxWidth:number)=>{
@@ -35,18 +39,20 @@ export async function reportPdf(report:ReportDocument,{customerCopy=false,portra
  };
  const draw=(value:string,x:number,at:number,size=9,font=regular,color=ink)=>page.drawText(clean(value),{x,y:at,size,font,color});
  function newPage(){
-  page=pdf.addPage([width,height]);y=height-105;
+  page=pdf.addPage([width,height]);y=height-(customerCopy?107:105);
   const imageWidth=135,imageHeight=logo.height/logo.width*imageWidth;
   page.drawImage(logo,{x:margin,y:height-32-imageHeight,width:imageWidth,height:imageHeight});
-  let titleSize=13;while(bold.widthOfTextAtSize(report.title.toUpperCase(),titleSize)>200&&titleSize>8)titleSize--;
-  draw(report.title.toUpperCase(),width-margin-200,height-43,titleSize,bold,purple);
-  draw(customerCopy?'Customer copy | PKR':report.title==='Detailed audit report'?'Private audit report | PKT':'Private management report | PKR',width-margin-162,height-59,8,regular,muted);
-  page.drawLine({start:{x:margin,y:height-78},end:{x:width-margin,y:height-78},thickness:1,color:line});
+  const heading=customerCopy?'CUSTOMER COPY':report.title.toUpperCase();
+  let titleSize=13;while(bold.widthOfTextAtSize(heading,titleSize)>200&&titleSize>8)titleSize--;
+  draw(heading,width-margin-bold.widthOfTextAtSize(heading,titleSize),height-43,titleSize,bold,customerCopy?teal:accent);
+  const caption=customerCopy?'Amounts in Pakistani rupees (PKR)':report.title==='Detailed audit report'?'Private audit report | PKT':'Private management report | PKR';
+  draw(caption,width-margin-regular.widthOfTextAtSize(caption,8),height-59,8,regular,muted);
+  page.drawLine({start:{x:margin,y:height-78},end:{x:width-margin,y:height-78},thickness:customerCopy?1.5:1,color:customerCopy?teal:line});
  }
  function ensure(space:number){if(y-space<55)newPage();}
  function paragraph(value:string,size=9,color=muted){for(const content of wrap(value,regular,size,bodyWidth)){ensure(size+5);draw(content,margin,y,size,regular,color);y-=size+5;}y-=5;}
  newPage();
- draw(report.title,margin,y,25,bold);y-=28;
+ for(const titleLine of wrap(report.title,bold,25,bodyWidth)){draw(titleLine,margin,y,25,bold);y-=28;}
  paragraph(`${report.scope} | ${report.period}`,11,ink);
  paragraph(customerCopy?`Generated ${report.generated}`:`Generated ${report.generated} | Prepared by ${report.preparedBy}`,8);
  const metricWidth=(bodyWidth-24)/3;
@@ -56,16 +62,40 @@ export async function reportPdf(report:ReportDocument,{customerCopy=false,portra
   page.drawRectangle({x,y:y-54,width:metricWidth,height:62,color:light});
   wrap(metric.label,regular,8,metricWidth-22).forEach((label,lineIndex)=>draw(label,x+11,y-8-lineIndex*10,8,regular,muted));
   let size=16;while(bold.widthOfTextAtSize(metric.value,size)>metricWidth-22&&size>8)size--;
-  draw(metric.value,x+11,y-34,size,bold,purple);
+  draw(metric.value,x+11,y-34,size,bold,customerCopy?teal:accent);
  }
- y-=78;
+ y-=customerCopy?68:78;
  for(const note of report.notes)paragraph(note,8);
  y-=5;
+ function invoiceSummary(section:ReportTable) {
+  const totals=section.invoiceTotals;
+  if(!totals)return;
+  ensure(100);
+  y-=12;
+  const title='Totals · '+section.title;
+  for(const heading of wrap(title,bold,10,bodyWidth)){draw(heading,margin,y,10,bold);y-=14;}
+  const columnWidth=bodyWidth/3;
+  const entries=[
+    ['Retail subtotal',totals.subtotal],['Total discount',totals.discount],['Invoice total',totals.total],
+    ['Total paid',totals.paid],['Return credits',totals.credits],['Remaining balance',totals.balance],
+  ];
+  entries.forEach(([label,value],index)=>{
+    const x=margin+(index%3)*columnWidth, top=y-Math.floor(index/3)*34;
+    const emphasized=index===2||index===5, background=index===5?tealSoft:index===2?accent:light;
+    const color=index===2?rgb(1,1,1):index===5?teal:ink;
+    page.drawRectangle({x,y:top-33,width:columnWidth-1,height:33,color:background});
+    draw(label,x+9,top-11,8,emphasized?bold:regular,color);
+    let size=emphasized?12:10;
+    while(bold.widthOfTextAtSize(value,size)>columnWidth-18&&size>7)size--;
+    draw(value,x+9,top-25,size,bold,color);
+  });
+  y-=68;
+ }
  function table(section:ReportTable){
-  const widths=section.widths.map(w=>w/100*bodyWidth),fontSize=8,lineHeight=11;
+  const widths=section.widths.map(w=>w/100*bodyWidth),fontSize=8,lineHeight=11,rowPadding=customerCopy?12:15;
   const headerLines=section.headers.map((h,i)=>wrap(h,bold,fontSize,widths[i]-14));
   const headerHeight=Math.max(...headerLines.map(h=>h.length))*lineHeight+15;
-  const drawHeader=()=>{page.drawRectangle({x:margin,y:y-headerHeight,width:bodyWidth,height:headerHeight,color:purple});let x=margin;headerLines.forEach((lines,i)=>{lines.forEach((v,n)=>draw(v,x+7,y-12-n*lineHeight,fontSize,bold,rgb(1,1,1)));x+=widths[i];});y-=headerHeight;};
+  const drawHeader=()=>{page.drawRectangle({x:margin,y:y-headerHeight,width:bodyWidth,height:headerHeight,color:accent});let x=margin;headerLines.forEach((lines,i)=>{lines.forEach((v,n)=>draw(v,x+7,y-12-n*lineHeight,fontSize,bold,rgb(1,1,1)));x+=widths[i];});y-=headerHeight;};
   const noteHeight=section.note?wrap(section.note,regular,8,bodyWidth).length*13+5:0;
   ensure(75+headerHeight+(section.barcode?56:0)+Math.min(noteHeight,120));
   for(const title of wrap(section.title,bold,14,bodyWidth)){draw(title,margin,y,14,bold);y-=18;}
@@ -84,15 +114,18 @@ export async function reportPdf(report:ReportDocument,{customerCopy=false,portra
    const lines=row.map((cell,i)=>wrap(cell,regular,fontSize,widths[i]-14));
    let offset=0;const count=Math.max(...lines.map(l=>l.length));
    while(offset<count){
-    const remaining=count-offset,needed=remaining*lineHeight+15;
-    if(y-Math.min(needed,45)<55){newPage();draw(section.title+' (continued)',margin,y,12,bold);y-=21;drawHeader();}
-    const capacity=Math.max(1,Math.floor((y-55-15)/lineHeight)),take=Math.min(remaining,capacity),rowHeight=take*lineHeight+15;
+    const remaining=count-offset,needed=remaining*lineHeight+rowPadding;
+    const keepWithTotals=section.invoiceTotals&&index===rows.length-1&&needed<=100;
+    if(y-(keepWithTotals?needed+100:Math.min(needed,45))<55){newPage();draw(section.title+' (continued)',margin,y,12,bold);y-=21;drawHeader();}
+    const capacity=Math.max(1,Math.floor((y-55-rowPadding)/lineHeight)),take=Math.min(remaining,capacity),rowHeight=take*lineHeight+rowPadding;
     if(index%2===0)page.drawRectangle({x:margin,y:y-rowHeight,width:bodyWidth,height:rowHeight,color:light});
     let x=margin;lines.forEach((values,i)=>{values.slice(offset,offset+take).forEach((v,n)=>draw(v,x+7,y-12-n*lineHeight,fontSize));x+=widths[i];});
     page.drawLine({start:{x:margin,y:y-rowHeight},end:{x:width-margin,y:y-rowHeight},thickness:.35,color:line});
     y-=rowHeight;offset+=take;
    }
-  });y-=27;
+  });
+  invoiceSummary(section);
+  y-=customerCopy?18:27;
  }
  for(const section of report.tables)table(section);
  pdf.getPages().forEach((p,index)=>{

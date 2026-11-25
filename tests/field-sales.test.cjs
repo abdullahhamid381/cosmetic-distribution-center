@@ -160,7 +160,10 @@ test('combined receipt uses the recorded snapshot, including invoices with no al
   assert.deepEqual(document.tables[0].rows[1],['INV-2','2026-11-20','Rs. 400.00','Rs. 0.00','Rs. 400.00']);
   assert.equal(document.tables[1].barcode.value,'INV-20261110-1');
   assert.deepEqual(document.tables[1].rows[0],['Serum\nBatch: B10','2','250.00','50.00%','0.00%','125.00','250.00']);
-  assert.match(document.tables[1].note,/Remaining balance Rs. 0.00/);
+  assert.deepEqual(document.tables[1].invoiceTotals,{
+    subtotal:'Rs. 500.00',discount:'Rs. 250.00',total:'Rs. 250.00',
+    paid:'Rs. 250.00',credits:'Rs. 0.00',balance:'Rs. 0.00',
+  });
   assert.equal(response.headers.get('cache-control'),'private, no-store');
 });
 

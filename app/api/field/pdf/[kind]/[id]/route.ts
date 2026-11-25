@@ -37,11 +37,11 @@ async function invoiceDetails(tx: PoolClient, shopId: string, ids: string[],
   return invoices.map(invoice=>({
     title:'Invoice '+(invoice.invoice_no || '#'+invoice.id),
     barcode:invoiceBarcode(invoiceSlipCode(invoice.issue_date,invoice.slip_number),Number(invoice.id)),
-    note:[
-      `Issued ${invoice.issue_date}  ·  Due ${invoice.due_date}`,
-      `Retail subtotal ${money(invoice.subtotal)}  ·  Discount ${money(invoice.discount_total)}  ·  Invoice total ${money(invoice.total)}`,
-      `Total paid ${money(invoice.paid_total)}  ·  Return credits ${money(invoice.credit_total)}  ·  Remaining balance ${money(invoice.balance)}`,
-    ].join('\n'),
+    note:`Issued ${invoice.issue_date}  ·  Due ${invoice.due_date}`,
+    invoiceTotals:{
+      subtotal:money(invoice.subtotal),discount:money(invoice.discount_total),total:money(invoice.total),
+      paid:money(invoice.paid_total),credits:money(invoice.credit_total),balance:money(invoice.balance),
+    },
     headers:['Product / Batch','Qty','MRP (PKR)','1st disc.','2nd disc.','Unit price (PKR)','Total (PKR)'],
     widths:[31,8,12,10,10,14,15],
     rows:(invoice.lines??[]).map((line:{name:string;batch:string|null;qty:number;mrp:number;first:number;second:number;price:number;total:number})=>[
@@ -68,7 +68,7 @@ export async function GET(_:Request,{params}:{params:Promise<{kind:string;id:str
         AND ($2::bigint IS NULL OR assigned_sales_id=$2)`,[id,owner]);
       if (!shop) return null;
       const {rows:invoices}=await tx.query(`SELECT invoice_no, due_date::text AS due_date,
-        total,paid_total,credit_total,total-paid_total-credit_total AS balance_due
+        subtotal,discount_total,total,paid_total,credit_total,total-paid_total-credit_total AS balance_due
         FROM invoices WHERE shop_id=$1 AND total>paid_total+credit_total ORDER BY due_date,id`,[id]);
       if (!invoices.length) return null;
       const balance=invoices.reduce((sum,invoice)=>sum+Math.round(Number(invoice.balance_due)*100),0)/100;
@@ -76,8 +76,10 @@ export async function GET(_:Request,{params}:{params:Promise<{kind:string;id:str
         title:'Combined open invoice statement',scope:shop.shop_name,period:pakistanToday(),generated:pakistanToday(),preparedBy:'',
         metrics:[{label:'Open invoices',value:String(invoices.length)},{label:'Total outstanding',value:money(balance)}],
         notes:['This statement consolidates existing invoices for payment. Each invoice retains its original number.'],
-        tables:[{title:'Open invoices',headers:['Invoice','Due date','Invoice total','Paid','Credits','Balance due'],widths:[22,16,17,15,14,16],
-          rows:invoices.map(i=>[i.invoice_no,i.due_date,money(i.total),money(i.paid_total),money(i.credit_total),money(i.balance_due)])}],
+        tables:[{title:'Open invoices',headers:['Invoice','Due date','Subtotal','Total discount','Invoice total','Paid','Credits','Balance due'],
+          widths:[16,13,12,11,13,11,10,14],
+          rows:invoices.map(i=>[i.invoice_no,i.due_date,money(i.subtotal),money(i.discount_total),money(i.total),
+            money(i.paid_total),money(i.credit_total),money(i.balance_due)])}],
       } satisfies ReportDocument;
     }
     let document: ReportDocument;

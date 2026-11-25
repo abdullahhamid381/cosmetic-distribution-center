@@ -3,7 +3,8 @@ import type {businessReport,reportFilters} from './report-data';
 import {money} from './utils';
 
 export type ReportTable={title:string;note?:string;headers:string[];widths:number[];rows:string[][];
- barcode?:ReturnType<typeof import('./invoice-barcode').invoiceBarcode>};
+ barcode?:ReturnType<typeof import('./invoice-barcode').invoiceBarcode>;
+ invoiceTotals?:{subtotal:string;discount:string;total:string;paid:string;credits:string;balance:string}};
 export type ReportDocument={title:string;scope:string;period:string;generated:string;preparedBy:string;metrics:{label:string;value:string}[];notes:string[];tables:ReportTable[]};
 const text=(value:unknown)=>value===null||value===undefined||value===''?'—':String(value);
 const cash=(value:unknown)=>money(Number(value||0));
