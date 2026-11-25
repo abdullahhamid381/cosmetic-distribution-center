@@ -13,6 +13,8 @@ import type {PoolClient} from 'pg';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+type FieldPdfDocument = ReportDocument & {filenameStem:string};
+
 async function invoiceDetails(tx: PoolClient, shopId: string, ids: string[],
   legacyNumbers: string[] = [], recordedAt: Date|null = null): Promise<ReportTable[]> {
   if (!ids.length && !legacyNumbers.length) return [];
@@ -60,6 +62,7 @@ export async function GET(_:Request,{params}:{params:Promise<{kind:string;id:str
     return new Response(null,{status:404});
   }
   const owner = fieldOwner(user);
+  const generated = pakistanToday();
   const document = await transaction(async tx => {
     // Keep authorization, totals and line items on the same database snapshot.
     await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
@@ -73,23 +76,25 @@ export async function GET(_:Request,{params}:{params:Promise<{kind:string;id:str
       if (!invoices.length) return null;
       const balance=invoices.reduce((sum,invoice)=>sum+Math.round(Number(invoice.balance_due)*100),0)/100;
       return {
-        title:'Combined open invoice statement',scope:shop.shop_name,period:pakistanToday(),generated:pakistanToday(),preparedBy:'',
+        title:'Combined open invoice statement',scope:shop.shop_name,period:generated,generated,preparedBy:'',
+        filenameStem:'combined-invoices-'+shop.shop_name,
         metrics:[{label:'Open invoices',value:String(invoices.length)},{label:'Total outstanding',value:money(balance)}],
         notes:['This statement consolidates existing invoices for payment. Each invoice retains its original number.'],
         tables:[{title:'Open invoices',headers:['Invoice','Due date','Subtotal','Total discount','Invoice total','Paid','Credits','Balance due'],
           widths:[16,13,12,11,13,11,10,14],
           rows:invoices.map(i=>[i.invoice_no,i.due_date,money(i.subtotal),money(i.discount_total),money(i.total),
             money(i.paid_total),money(i.credit_total),money(i.balance_due)])}],
-      } satisfies ReportDocument;
+      } satisfies FieldPdfDocument;
     }
-    let document: ReportDocument;
+    let document: FieldPdfDocument;
     if (kind==='invoice') {
       const {rows:[invoice]} = await tx.query(`SELECT i.shop_id,i.invoice_no,i.total,i.paid_total,i.credit_total,
         to_char(i.issue_date,'DD Mon YYYY') AS date,to_char(i.due_date,'DD Mon YYYY') AS due_date,s.shop_name
         FROM invoices i JOIN shops s ON s.id=i.shop_id WHERE i.id=$1
         AND ($2::bigint IS NULL OR (s.active AND s.assigned_sales_id=$2))`,[id,owner]);
       if (!invoice) return null;
-      document = {title:'Sales invoice '+invoice.invoice_no,scope:invoice.shop_name,period:invoice.date,generated:pakistanToday(),preparedBy:'',
+      document = {title:'Sales invoice '+invoice.invoice_no,scope:invoice.shop_name,period:invoice.date,generated,preparedBy:'',
+        filenameStem:'updated-invoice-'+(invoice.invoice_no||id),
         metrics:[{label:'Invoice total',value:money(invoice.total)},{label:'Paid',value:money(invoice.paid_total)},
           {label:'Balance due',value:money(Number(invoice.total)-Number(invoice.paid_total)-Number(invoice.credit_total))}],
         notes:['Payment due '+invoice.due_date,'Return credits '+money(invoice.credit_total)],
@@ -112,7 +117,8 @@ export async function GET(_:Request,{params}:{params:Promise<{kind:string;id:str
           before:sum.before+line.balanceBeforeCents,after:sum.after+line.balanceAfterCents,
         }),{before:0,after:0});
         return {
-          title:'Combined invoice statement and receipt',scope:payment.shop_name,period:payment.date,generated:pakistanToday(),preparedBy:'',
+          title:'Combined invoice statement and receipt',scope:payment.shop_name,period:payment.date,generated,preparedBy:'',
+          filenameStem:'combined-invoices-'+(payment.payment_no||id),
           metrics:[{label:'Balance before payment',value:money(balances.before/100)},
             {label:'Payment received',value:money(payment.amount)},{label:'Balance immediately after payment',value:money(balances.after/100)}],
           notes:[`Receipt ${payment.payment_no} · ${payment.method}`,...receiptNotes,
@@ -122,11 +128,14 @@ export async function GET(_:Request,{params}:{params:Promise<{kind:string;id:str
               money(line.appliedCents/100),money(line.balanceAfterCents/100)])},
             ...await invoiceDetails(tx,payment.shop_id,combined.flatMap(line=>line.invoiceId?[line.invoiceId]:[]),
               combined.filter(line=>!line.invoiceId).map(line=>line.number),payment.created_at)],
-        } satisfies ReportDocument;
+        } satisfies FieldPdfDocument;
       }
       const {rows:allocations} = await tx.query(`SELECT i.id,i.invoice_no,a.amount FROM payment_allocations a
         JOIN invoices i ON i.id=a.invoice_id WHERE a.payment_id=$1 ORDER BY i.id`,[id]);
-      document = {title:'Payment receipt '+payment.payment_no,scope:payment.shop_name,period:payment.date,generated:pakistanToday(),preparedBy:'',
+      const receiptNumber=payment.payment_no||id;
+      const invoiceNumber=allocations.length===1?allocations[0].invoice_no:null;
+      document = {title:'Payment receipt '+payment.payment_no,scope:payment.shop_name,period:payment.date,generated,preparedBy:'',
+        filenameStem:invoiceNumber?'updated-invoice-'+invoiceNumber+'-'+receiptNumber:'payment-receipt-'+receiptNumber,
         metrics:[{label:'Payment received',value:money(payment.amount)},{label:'Method',value:payment.method}],
         notes:receiptNotes,
         tables:[{title:'Applied to invoices',headers:['Invoice','Amount'],widths:[70,30],
@@ -137,9 +146,10 @@ export async function GET(_:Request,{params}:{params:Promise<{kind:string;id:str
   });
   if (!document) return new Response(null,{status:404});
   const bytes = await reportPdf(document,{customerCopy:true,portrait:true});
+  const stem = document.filenameStem.replace(/[^A-Za-z0-9_-]+/g,'-').replace(/^-+|-+$/g,'').slice(0,100);
   return new NextResponse(new Uint8Array(bytes),{headers:{
     'Content-Type':'application/pdf',
-    'Content-Disposition':`attachment; filename="hh-medics-${kind}-${id}.pdf"`,
+    'Content-Disposition':`attachment; filename="${stem}-${generated}.pdf"`,
     'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff',
   }});
 }

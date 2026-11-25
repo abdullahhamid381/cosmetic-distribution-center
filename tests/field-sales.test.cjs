@@ -165,6 +165,7 @@ test('combined receipt uses the recorded snapshot, including invoices with no al
     paid:'Rs. 250.00',credits:'Rs. 0.00',balance:'Rs. 0.00',
   });
   assert.equal(response.headers.get('cache-control'),'private, no-store');
+  assert.equal(response.headers.get('content-disposition'),'attachment; filename="combined-invoices-PAY-000024-2026-11-25.pdf"');
 });
 
 test('Field Sales staff are restricted to their assigned shops and cannot grant access',async()=>{

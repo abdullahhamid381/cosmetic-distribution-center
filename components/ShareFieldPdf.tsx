@@ -22,6 +22,8 @@ export function ShareFieldPdf({kind, id, label, customerPhone}: {kind:'invoice'|
         if (!(error instanceof DOMException && error.name === 'AbortError')) {
           setMessage('Download the PDF and attach it in WhatsApp.');
         }
+      } finally {
+        setFile(null);
       }
       return;
     }
@@ -36,15 +38,21 @@ export function ShareFieldPdf({kind, id, label, customerPhone}: {kind:'invoice'|
         setMessage('The PDF could not be loaded. Try downloading it.');
         return;
       }
-      const pdf = new File([await response.blob()], `hh-medics-${kind}-${id}.pdf`, {type:'application/pdf'});
+      const filename = response.headers.get('content-disposition')?.match(/filename="([A-Za-z0-9_-]+\.pdf)"/i)?.[1]
+        ?? `hh-medics-${kind}-${id}.pdf`;
+      const pdf = new File([await response.blob()], filename, {type:'application/pdf'});
       if (navigator.canShare({files:[pdf]})) {
         setFile(pdf);
         if (navigator.userActivation?.isActive) {
           try {
             await navigator.share({files:[pdf]});
+            setFile(null);
             return;
           } catch (error) {
-            if (error instanceof DOMException && error.name === 'AbortError') return;
+            if (error instanceof DOMException && error.name === 'AbortError') {
+              setFile(null);
+              return;
+            }
           }
         }
         setMessage('PDF ready. Tap Share PDF and choose WhatsApp.');
