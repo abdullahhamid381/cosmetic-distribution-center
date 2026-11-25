@@ -1,4 +1,4 @@
-﻿import type {MetadataRoute} from 'next';
+import type {MetadataRoute} from 'next';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
@@ -10,12 +10,12 @@ export default function manifest(): MetadataRoute.Manifest {
     start_url: '/',
     scope: '/',
     display: 'standalone',
-    background_color: '#f3f5f8',
+    background_color: '#18263f',
     theme_color: '#18263f',
     icons: [
-      {src: '/hh-medics-app-192.png', sizes: '192x192', type: 'image/png', purpose: 'any'},
-      {src: '/hh-medics-app-512.png', sizes: '512x512', type: 'image/png', purpose: 'any'},
-      {src: '/hh-medics-app-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable'},
+      {src: '/hh-medics-launch-192.png', sizes: '192x192', type: 'image/png', purpose: 'any'},
+      {src: '/hh-medics-launch-512.png', sizes: '512x512', type: 'image/png', purpose: 'any'},
+      {src: '/hh-medics-launch-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable'},
     ],
   };
 }
