@@ -12,7 +12,7 @@ import {money,formatDate} from '@/lib/utils';
 import {DepartmentStats} from '@/components/DepartmentStats';
 import {DepartmentForm} from '@/components/DepartmentForm';
 import {saveBroker,payBrokerCommission} from '@/app/broker-actions';
-export default async function Brokers({searchParams}:{searchParams?:Promise<{type?:string}>}={}){
+export default async function Brokers({searchParams}:{searchParams?:Promise<{type?:string}>}){
  const input=await searchParams,source=input?.type==='SHOP'?'SHOP':'SALES',label=source==='SHOP'?'Shop brokers':'Sales brokers';
  const user=await requireRole('ADMIN','MANAGER','ACCOUNTS'),manage=['ADMIN','MANAGER'].includes(user.role);
  const [brokers,allOrders,allPayouts,allShopInvoices]=await Promise.all([query(`SELECT b.*,COALESCE(p.paid,0) AS paid FROM sales_brokers b LEFT JOIN LATERAL(SELECT SUM(amount) AS paid FROM broker_commission_payouts WHERE broker_id=b.id)p ON true ORDER BY b.full_name`),customerOrders(),query(`SELECT p.*,to_char(p.payment_date,'YYYY-MM-DD') AS payment_date,to_char(p.payment_date,'FMDay') AS payment_day,to_char(p.created_at AT TIME ZONE 'Asia/Karachi','YYYY-MM-DD HH24:MI:SS') AS recorded_at,r.file_name AS receipt_name,b.full_name,u.full_name AS recorded_by FROM broker_commission_payouts p LEFT JOIN broker_payout_receipts r ON r.payout_id=p.id JOIN sales_brokers b ON b.id=p.broker_id JOIN users u ON u.id=p.created_by ORDER BY p.payment_date DESC,p.id DESC`),shopBrokerInvoices()]);

@@ -89,7 +89,7 @@ test('broker account shows invoice-level deductions and reconciled negative bala
   '@/components/DepartmentStats':{DepartmentStats:({items})=>React.createElement('div',null,items.map(([k,v])=>k+': '+v).join(' | '))},
   '@/components/DepartmentForm':{DepartmentForm:()=>null},'@/app/broker-actions':{}
  });
- const html=renderToStaticMarkup(await brokerPage.default());
+ const html=renderToStaticMarkup(await brokerPage.default({}));
  const shopHtml=renderToStaticMarkup(await brokerPage.default({searchParams:Promise.resolve({type:'SHOP'})}));
  assert.ok(shopHtml.includes('Shop brokers &amp; commission payouts'));assert.ok(!shopHtml.includes('Unpaid Customer'));assert.ok(!shopHtml.includes('CO-12'));assert.ok(!shopHtml.includes('-125.00'));
  for(const label of ['profit and pending deduction details','Unpaid Customer','CO-12','Less pending customer orders','Net broker balance','-125.00','300.00'])assert.ok(html.includes(label),label);

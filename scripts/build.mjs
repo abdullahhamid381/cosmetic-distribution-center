@@ -6,11 +6,15 @@ const require = createRequire(import.meta.url);
 // Set this before Next.js loads its native compiler or forks build workers.
 const env = {
   ...process.env,
+  // Next.js subtracts one from this value for its default page-data worker count.
+  CIRCLE_NODE_TOTAL: '3',
   TOKIO_WORKER_THREADS: process.env.TOKIO_WORKER_THREADS ?? '2',
   NEXT_DEPLOYMENT_ID: process.env.NEXT_DEPLOYMENT_ID || randomUUID(),
 };
+const args = process.argv.slice(2);
+const bundler = args.some(arg => ['--webpack', '--turbo', '--turbopack'].includes(arg)) ? [] : ['--webpack'];
 const build = spawnSync(process.execPath, [
-  require.resolve('next/dist/bin/next'), 'build', ...process.argv.slice(2),
+  require.resolve('next/dist/bin/next'), 'build', ...bundler, ...args,
 ], {env, stdio: 'inherit'});
 
 if (build.error) console.error(build.error.message);
