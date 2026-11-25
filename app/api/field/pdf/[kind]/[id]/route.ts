@@ -13,7 +13,7 @@ import type {PoolClient} from 'pg';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type FieldPdfDocument = ReportDocument & {filenameStem:string};
+type FieldPdfDocument = ReportDocument & {storeCode:string};
 
 async function invoiceDetails(tx: PoolClient, shopId: string, ids: string[],
   legacyNumbers: string[] = [], recordedAt: Date|null = null): Promise<ReportTable[]> {
@@ -67,7 +67,7 @@ export async function GET(_:Request,{params}:{params:Promise<{kind:string;id:str
     // Keep authorization, totals and line items on the same database snapshot.
     await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
     if (kind==='combined') {
-      const {rows:[shop]}=await tx.query(`SELECT shop_name FROM shops WHERE id=$1 AND active
+      const {rows:[shop]}=await tx.query(`SELECT shop_name,store_code FROM shops WHERE id=$1 AND active
         AND ($2::bigint IS NULL OR assigned_sales_id=$2)`,[id,owner]);
       if (!shop) return null;
       const {rows:invoices}=await tx.query(`SELECT invoice_no, due_date::text AS due_date,
@@ -77,7 +77,7 @@ export async function GET(_:Request,{params}:{params:Promise<{kind:string;id:str
       const balance=invoices.reduce((sum,invoice)=>sum+Math.round(Number(invoice.balance_due)*100),0)/100;
       return {
         title:'Combined open invoice statement',scope:shop.shop_name,period:generated,generated,preparedBy:'',
-        filenameStem:'combined-invoices-'+shop.shop_name,
+        storeCode:shop.store_code,
         metrics:[{label:'Open invoices',value:String(invoices.length)},{label:'Total outstanding',value:money(balance)}],
         notes:['This statement consolidates existing invoices for payment. Each invoice retains its original number.'],
         tables:[{title:'Open invoices',headers:['Invoice','Due date','Subtotal','Total discount','Invoice total','Paid','Credits','Balance due'],
@@ -89,19 +89,19 @@ export async function GET(_:Request,{params}:{params:Promise<{kind:string;id:str
     let document: FieldPdfDocument;
     if (kind==='invoice') {
       const {rows:[invoice]} = await tx.query(`SELECT i.shop_id,i.invoice_no,i.total,i.paid_total,i.credit_total,
-        to_char(i.issue_date,'DD Mon YYYY') AS date,to_char(i.due_date,'DD Mon YYYY') AS due_date,s.shop_name
+        to_char(i.issue_date,'DD Mon YYYY') AS date,to_char(i.due_date,'DD Mon YYYY') AS due_date,s.shop_name,s.store_code
         FROM invoices i JOIN shops s ON s.id=i.shop_id WHERE i.id=$1
         AND ($2::bigint IS NULL OR (s.active AND s.assigned_sales_id=$2))`,[id,owner]);
       if (!invoice) return null;
       document = {title:'Sales invoice '+invoice.invoice_no,scope:invoice.shop_name,period:invoice.date,generated,preparedBy:'',
-        filenameStem:'updated-invoice-'+(invoice.invoice_no||id),
+        storeCode:invoice.store_code,
         metrics:[{label:'Invoice total',value:money(invoice.total)},{label:'Paid',value:money(invoice.paid_total)},
           {label:'Balance due',value:money(Number(invoice.total)-Number(invoice.paid_total)-Number(invoice.credit_total))}],
         notes:['Payment due '+invoice.due_date,'Return credits '+money(invoice.credit_total)],
         tables:await invoiceDetails(tx,invoice.shop_id,[id])};
     } else {
       const {rows:[payment]} = await tx.query(`SELECT p.payment_no,p.shop_id,p.created_at,p.amount,p.method,p.reference,
-        to_char(p.payment_date,'DD Mon YYYY') AS date,s.shop_name,u.full_name AS collector,
+        to_char(p.payment_date,'DD Mon YYYY') AS date,s.shop_name,s.store_code,u.full_name AS collector,
         entry.details->'combinedInvoices' AS combined_invoices
         FROM payments p JOIN shops s ON s.id=p.shop_id LEFT JOIN users u ON u.id=p.created_by
         LEFT JOIN LATERAL (
@@ -118,7 +118,7 @@ export async function GET(_:Request,{params}:{params:Promise<{kind:string;id:str
         }),{before:0,after:0});
         return {
           title:'Combined invoice statement and receipt',scope:payment.shop_name,period:payment.date,generated,preparedBy:'',
-          filenameStem:'combined-invoices-'+(payment.payment_no||id),
+          storeCode:payment.store_code,
           metrics:[{label:'Balance before payment',value:money(balances.before/100)},
             {label:'Payment received',value:money(payment.amount)},{label:'Balance immediately after payment',value:money(balances.after/100)}],
           notes:[`Receipt ${payment.payment_no} · ${payment.method}`,...receiptNotes,
@@ -132,10 +132,8 @@ export async function GET(_:Request,{params}:{params:Promise<{kind:string;id:str
       }
       const {rows:allocations} = await tx.query(`SELECT i.id,i.invoice_no,a.amount FROM payment_allocations a
         JOIN invoices i ON i.id=a.invoice_id WHERE a.payment_id=$1 ORDER BY i.id`,[id]);
-      const receiptNumber=payment.payment_no||id;
-      const invoiceNumber=allocations.length===1?allocations[0].invoice_no:null;
       document = {title:'Payment receipt '+payment.payment_no,scope:payment.shop_name,period:payment.date,generated,preparedBy:'',
-        filenameStem:invoiceNumber?'updated-invoice-'+invoiceNumber+'-'+receiptNumber:'payment-receipt-'+receiptNumber,
+        storeCode:payment.store_code,
         metrics:[{label:'Payment received',value:money(payment.amount)},{label:'Method',value:payment.method}],
         notes:receiptNotes,
         tables:[{title:'Applied to invoices',headers:['Invoice','Amount'],widths:[70,30],
@@ -146,10 +144,10 @@ export async function GET(_:Request,{params}:{params:Promise<{kind:string;id:str
   });
   if (!document) return new Response(null,{status:404});
   const bytes = await reportPdf(document,{customerCopy:true,portrait:true});
-  const stem = document.filenameStem.replace(/[^A-Za-z0-9_-]+/g,'-').replace(/^-+|-+$/g,'').slice(0,100);
+  const code = document.storeCode.replace(/[^A-Za-z0-9_-]+/g,'-');
   return new NextResponse(new Uint8Array(bytes),{headers:{
     'Content-Type':'application/pdf',
-    'Content-Disposition':`attachment; filename="${stem}-${generated}.pdf"`,
+    'Content-Disposition':`attachment; filename="${code}-${generated}.pdf"`,
     'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff',
   }});
 }

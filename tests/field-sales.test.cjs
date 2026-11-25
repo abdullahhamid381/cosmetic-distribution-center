@@ -148,7 +148,7 @@ test('combined receipt uses the recorded snapshot, including invoices with no al
       }
       assert.match(sql,/assigned_sales_id=\$2 AND p.created_by=\$2/);
       assert.deepEqual(args,['24',7]);
-      return {rows:[{payment_no:'PAY-000024',amount:'250',method:'CASH',shop_name:'Example shop',
+      return {rows:[{payment_no:'PAY-000024',amount:'250',method:'CASH',shop_name:'Example shop',store_code:'EXS-10',
         date:'25 Nov 2026',shop_id:'10',created_at:new Date('2026-11-25T08:00:00Z'),combined_invoices:rows}]};
     }})},
     '@/lib/report-pdf':{reportPdf:async model=>{document=model;return new Uint8Array([37,80,68,70]);}},
@@ -165,7 +165,7 @@ test('combined receipt uses the recorded snapshot, including invoices with no al
     paid:'Rs. 250.00',credits:'Rs. 0.00',balance:'Rs. 0.00',
   });
   assert.equal(response.headers.get('cache-control'),'private, no-store');
-  assert.equal(response.headers.get('content-disposition'),'attachment; filename="combined-invoices-PAY-000024-2026-11-25.pdf"');
+  assert.equal(response.headers.get('content-disposition'),'attachment; filename="EXS-10-2026-11-25.pdf"');
 });
 
 test('Field Sales staff are restricted to their assigned shops and cannot grant access',async()=>{
